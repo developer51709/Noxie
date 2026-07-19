@@ -104,7 +104,7 @@ def build_hunt_container(
             content=f"## {creature['emoji']}  {creature['name']}\n"
                     f"{creature['description']}"
         ),
-        discord.ui.Separator(divider=True),
+        discord.ui.Separator(visible=True),
         discord.ui.TextDisplay(
             content=(
                 f"**Rarity** — {rarity_label}\n"
@@ -113,14 +113,14 @@ def build_hunt_container(
                 f"**Power**  — `{creature.get('power', 0):,}`"
             )
         ),
-        discord.ui.Separator(divider=False),
+        discord.ui.Separator(visible=False),
         discord.ui.TextDisplay(
             content=(
                 f"**Rewards:** +{glow_earned} Glow Shards  ·  +{coins_earned} Vibe Coins\n"
                 f"*Total hunts: {total_hunts}*"
             )
         ),
-        discord.ui.Separator(divider=True),
+        discord.ui.Separator(visible=True),
         discord.ui.TextDisplay(content=f"*{personality_line}*"),
     ]
 
@@ -180,7 +180,7 @@ def build_creature_container(
             content=f"## {creature['emoji']}  {creature['name']}  ×{count}\n"
                     f"> {creature['description']}"
         ),
-        discord.ui.Separator(divider=True),
+        discord.ui.Separator(visible=True),
         discord.ui.TextDisplay(
             content=(
                 f"**Rarity** — {rarity.capitalize()}\n"
@@ -193,7 +193,7 @@ def build_creature_container(
 
     # ── Mood banner at BOTTOM ──────────────────────────────────────────────────
     if banner_path:
-        inner.append(discord.ui.Separator(divider=False))
+        inner.append(discord.ui.Separator(visible=False))
         inner.append(
             discord.ui.MediaGallery(
                 items=[discord.ui.MediaGalleryItem(media="attachment://creature_banner.jpeg")]
@@ -230,11 +230,11 @@ def build_mood_pulse_container(
         badge_display.get(b, f"[{b}]") for b in badges
     ) if badges else "*no badges yet*"
 
-    inner: list = [
+    container = discord.ui.Container(
         discord.ui.TextDisplay(
             content=f"## 👁️  {user_name}'s Vibe Profile"
         ),
-        discord.ui.Separator(divider=True),
+        discord.ui.Separator(visible=True),
         discord.ui.TextDisplay(
             content=(
                 f"**Current Vibe** — {vibe_status}\n"
@@ -242,33 +242,29 @@ def build_mood_pulse_container(
                 f"**Total Hunts**  — {total_hunts:,}"
             )
         ),
-        discord.ui.Separator(divider=False),
+        discord.ui.Separator(visible=False),
         discord.ui.TextDisplay(
             content=(
                 f"**Glow Shards** — `{glow_shards:,}` ✨\n"
                 f"**Vibe Coins**  — `{vibe_coins:,}` 🪙"
             )
         ),
-        discord.ui.Separator(divider=True),
+        discord.ui.Separator(visible=True),
         discord.ui.TextDisplay(content=f"**Badges**\n{badge_str}"),
-    ]
+        accent_color=discord.Color(0x7930A7),
+    )
 
     files: list[discord.File] = []
 
     # ── Mood banner at BOTTOM ──────────────────────────────────────────────────
     if banner_path:
-        inner.append(discord.ui.Separator(divider=False))
-        inner.append(
+        container.add_item(discord.ui.Separator(visible=False))
+        container.add_item(
             discord.ui.MediaGallery(
-                items=[discord.ui.MediaGalleryItem(media="attachment://mood_pulse.jpeg")]
+                discord.MediaGalleryItem(media="attachment://mood_pulse.jpeg")
             )
         )
         files.append(_make_file(banner_path, "mood_pulse.jpeg"))
-
-    container = discord.ui.Container(
-        children=inner,
-        accent_color=discord.Color(0x7930A7),
-    )
     return [container], files
 
 
@@ -305,7 +301,7 @@ def build_inventory_container(
         discord.ui.TextDisplay(
             content=f"## 🎒  {user_name}'s Collection  (page {page}/{total_pages})"
         ),
-        discord.ui.Separator(divider=True),
+        discord.ui.Separator(visible=True),
         discord.ui.TextDisplay(content=lines),
     ]
 
@@ -334,7 +330,7 @@ def build_donate_start_container(
         discord.ui.TextDisplay(
             content="## 💎  Support Noxie"
         ),
-        discord.ui.Separator(divider=True),
+        discord.ui.Separator(visible=True),
         discord.ui.TextDisplay(
             content=(
                 f"**Amount:**    `${amount_usd:.2f} USD`\n"
@@ -344,7 +340,7 @@ def build_donate_start_container(
                 f"**Payment ID:** `{payment_id}`"
             )
         ),
-        discord.ui.Separator(divider=False),
+        discord.ui.Separator(visible=False),
         discord.ui.TextDisplay(
             content=(
                 "⏳ Send the exact amount shown above.\n"
@@ -358,7 +354,7 @@ def build_donate_start_container(
 
     # ── Mood banner at BOTTOM ──────────────────────────────────────────────────
     if banner_path:
-        inner.append(discord.ui.Separator(divider=False))
+        inner.append(discord.ui.Separator(visible=False))
         inner.append(
             discord.ui.MediaGallery(
                 items=[discord.ui.MediaGalleryItem(media="attachment://donate_start.jpeg")]
@@ -392,7 +388,7 @@ def build_donate_confirm_container(
         discord.ui.TextDisplay(
             content="## 💖  Payment Confirmed!"
         ),
-        discord.ui.Separator(divider=True),
+        discord.ui.Separator(visible=True),
         discord.ui.TextDisplay(
             content=(
                 f"**Amount received:** `${amount_usd:.2f}` in `{currency}`\n\n"
@@ -402,7 +398,7 @@ def build_donate_confirm_container(
                 f"{badge_note}"
             )
         ),
-        discord.ui.Separator(divider=True),
+        discord.ui.Separator(visible=True),
         discord.ui.TextDisplay(content=f"*{personality_line}*"),
     ]
 
@@ -410,7 +406,7 @@ def build_donate_confirm_container(
 
     # ── Mood banner at BOTTOM ──────────────────────────────────────────────────
     if banner_path:
-        inner.append(discord.ui.Separator(divider=False))
+        inner.append(discord.ui.Separator(visible=False))
         inner.append(
             discord.ui.MediaGallery(
                 items=[discord.ui.MediaGalleryItem(media="attachment://donate_confirm.jpeg")]
@@ -435,7 +431,7 @@ def build_donate_failed_container(
     """
     inner: list = [
         discord.ui.TextDisplay(content="## ❌  Donation Issue"),
-        discord.ui.Separator(divider=True),
+        discord.ui.Separator(visible=True),
         discord.ui.TextDisplay(
             content=(
                 f"Something went wrong: *{reason}*\n\n"
@@ -447,7 +443,7 @@ def build_donate_failed_container(
     files: list[discord.File] = []
 
     if banner_path:
-        inner.append(discord.ui.Separator(divider=False))
+        inner.append(discord.ui.Separator(visible=False))
         inner.append(
             discord.ui.MediaGallery(
                 items=[discord.ui.MediaGalleryItem(media="attachment://donate_fail.jpeg")]
@@ -479,7 +475,7 @@ def build_face_reaction_container(
     files: list[discord.File] = []
 
     if banner_path:
-        inner.append(discord.ui.Separator(divider=False))
+        inner.append(discord.ui.Separator(visible=False))
         inner.append(
             discord.ui.MediaGallery(
                 items=[discord.ui.MediaGalleryItem(media="attachment://face.jpeg")]
@@ -505,17 +501,12 @@ async def send_cv2(
     """
     Unified send for CV2 messages across ctx, channel, and interaction.
     """
-    flags = discord.MessageFlags(is_components_v2=True)
-    kwargs = dict(components=components, files=files, flags=flags)
-
-    if isinstance(target, discord.Interaction):
+    view = discord.ui.LayoutView()
+    view.add_item(components)
+    if ctx.interaction:
         if ephemeral:
-            kwargs["ephemeral"] = True
-        if target.response.is_done():
-            await target.followup.send(**kwargs)
+            return await interaction.followup.send(view=view, files=files, ephemeral=True)
         else:
-            await target.response.send_message(**kwargs)
-    elif hasattr(target, "send"):
-        await target.send(**kwargs)
+            return await interaction.followup.send(view=view, files=files, ephemeral=False)
     else:
-        raise TypeError(f"Cannot send to target of type {type(target)}")
+        await ctx.send(view=view, files=files)
