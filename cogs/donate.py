@@ -32,7 +32,7 @@ from discord.ext import commands
 
 from utils import economy, face_manager, personality
 from utils.helpers import load_config
-from utils.logger import log
+from utils import logger
 from utils.cv2_helpers import _make_file, _media, _sep, send_cv2
 
 if TYPE_CHECKING:
@@ -232,7 +232,7 @@ async def run_donation_flow(
         try:
             data = await create_invoice(session, amount_usd, currency, order_id)
         except Exception as e:
-            log.error(f"donate invoice failed: user={user.id} amount=${amount_usd}", exc=e)
+            logger.error(f"donate invoice failed: user={user.id} amount=${amount_usd}", exc=e)
             banner = face_manager.get_face_for_event("donate_fail")
             comps, files = build_donate_failed_container(reason=str(e), banner_path=banner)
             await send_cv2(dm, comps, files)
@@ -241,7 +241,7 @@ async def run_donation_flow(
         track_id    = data.get("trackId", "")
         pay_address = data.get("payAddress", "N/A")
         pay_amount  = str(data.get("payAmount", "?"))
-        log.info(f"donate invoice created: user={user.id} amount=${amount_usd} {currency} track={track_id}")
+        logger.info(f"donate invoice created: user={user.id} amount=${amount_usd} {currency} track={track_id}")
 
         # Step 2: send payment instructions in DMs
         banner_start = face_manager.get_face_for_event("donate_start")
@@ -264,17 +264,17 @@ async def run_donation_flow(
             try:
                 status_data = await check_invoice(session, track_id)
             except Exception as e:
-                log.warning(f"donate poll error (attempt {poll_num + 1}): {e}")
+                logger.warn(f"donate poll error (attempt {poll_num + 1}): {e}")
                 continue
 
             status = status_data.get("status", "").lower()
-            log.debug(f"donate poll {poll_num + 1}/{POLL_MAX}: user={user.id} status={status}")
+            logger.debug(f"donate poll {poll_num + 1}/{POLL_MAX}: user={user.id} status={status}")
 
             if status in ("paid", "confirmed", "complete"):
                 confirmed = True
                 break
             if status in ("expired", "cancelled", "failed"):
-                log.warning(f"donate terminal status: user={user.id} status={status}")
+                logger.warn(f"donate terminal status: user={user.id} status={status}")
                 break
 
         # Step 4: handle result
@@ -286,7 +286,7 @@ async def run_donation_flow(
             economy.add_currency(bot.db, str(user.id), gid, glow, coins)
             is_new_donor = economy.award_badge(bot.db, str(user.id), "donor")
 
-            log.success(
+            logger.success(
                 f"donate confirmed: user={user.id} amount=${amount_usd} {currency} "
                 f"+{glow}gs +{coins}vc new_donor={is_new_donor}"
             )
@@ -305,7 +305,7 @@ async def run_donation_flow(
             await send_cv2(dm, comps, files)
 
         else:
-            log.warning(f"donate failed/expired: user={user.id} track={track_id}")
+            logger.warn(f"donate failed/expired: user={user.id} track={track_id}")
             banner_fail = face_manager.get_face_for_event("donate_fail")
             comps, files = build_donate_failed_container(
                 reason="payment expired or was not received",

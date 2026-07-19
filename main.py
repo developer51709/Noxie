@@ -28,7 +28,7 @@ from utils.helpers import load_config, get_db_conn
 from utils.economy import init_db as init_economy_db
 from utils import face_manager, personality
 from utils.cv2_helpers import build_face_reaction_container, send_cv2
-from utils.logger import log
+from utils import logger
 from cogs.prefixes import prefix_callable, init_prefix_table
 
 
@@ -74,18 +74,18 @@ class NoxieBot(commands.Bot):
         for cog in cogs:
             try:
                 await self.load_extension(cog)
-                log.success(f"loaded {cog}")
+                logger.success(f"loaded {cog}")
             except Exception as e:
-                log.error(f"failed to load {cog}", exc=e)
+                logger.error(f"failed to load {cog}", exc=e)
 
         # Sync application commands globally and store IDs for command links
         synced = await self.tree.sync()
         self.slash_ids = {cmd.name: cmd.id for cmd in synced}
-        log.success(f"slash commands synced ({len(synced)} registered)")
+        logger.success(f"slash commands synced ({len(synced)} registered)")
 
     async def on_ready(self) -> None:
-        log.info(f"🌑 Noxie is online — {self.user} ({self.user.id})")
-        log.info(f"   serving {len(self.guilds)} guild(s)")
+        logger.info(f"🌑 Noxie is online — {self.user} ({self.user.id})")
+        logger.info(f"   serving {len(self.guilds)} guild(s)")
         await self.change_presence(
             activity=discord.Activity(
                 type=discord.ActivityType.watching,
@@ -113,7 +113,7 @@ class NoxieBot(commands.Bot):
                 break
 
     async def on_guild_remove(self, guild: discord.Guild) -> None:
-        log.info(f"left guild: {guild.name} ({guild.id})")
+        logger.info(f"left guild: {guild.name} ({guild.id})")
 
     async def on_command_error(
         self, ctx: commands.Context, error: commands.CommandError
@@ -150,7 +150,7 @@ class NoxieBot(commands.Bot):
                 color=0xE74C3C,
             )
             await send_cv2(ctx, comps, files)
-            log.error(f"unhandled prefix command error: {error}", exc=error)
+            logger.error(f"unhandled prefix command error: {error}", exc=error)
 
     async def on_app_command_error(
         self,
@@ -166,12 +166,13 @@ class NoxieBot(commands.Bot):
             color=0xE74C3C,
         )
         await send_cv2(interaction, comps, files, ephemeral=True)
-        log.error(f"unhandled slash command error: {error}", exc=error)
+        logger.error(f"unhandled slash command error: {error}", exc=error)
 
 
 # ── Entry point ──────────────────────────────────────────────────────────────
 
 async def main() -> None:
+    logger.startup_banner()
     token = os.environ.get("NOXIE_TOKEN") or CONFIG.get("bot_token", "")
     if not token or token == "YOUR_BOT_TOKEN_HERE":
         print(

@@ -1,19 +1,8 @@
 """
-utils/logger.py — ANSI-colored console logger for Noxie.
+logger.py — Colored console logger for Noxie.
 
-Color palette matches Noxie's aesthetic:
-  DEBUG   → cyan       (🔵)
-  INFO    → purple     (🟣)
-  SUCCESS → magenta    (💜)
-  WARNING → yellow     (🟡)
-  ERROR   → red        (🔴)
-
-Usage:
-    from utils.logger import log
-    log.info("bot is online")
-    log.success("cog loaded")
-    log.warning("cooldown hit")
-    log.error("something broke", exc=e)
+Uses ANSI escape codes only (no external dependencies).
+Design matches the bot's dark/moody aesthetic: purples, cool whites, dim greys.
 """
 
 from __future__ import annotations
@@ -23,73 +12,82 @@ import traceback
 from datetime import datetime
 
 
-# ── ANSI codes ────────────────────────────────────────────────────────────────
+# ── ANSI palette ──────────────────────────────────────────────────────────────
 
-RESET   = "\033[0m"
-BOLD    = "\033[1m"
-DIM     = "\033[2m"
+class _C:
+    RESET   = "\033[0m"
+    BOLD    = "\033[1m"
+    DIM     = "\033[2m"
 
-# Noxie palette
-CYAN    = "\033[36m"
-PURPLE  = "\033[35m"      # magenta-ish — used for INFO
-MAGENTA = "\033[95m"      # bright magenta — used for SUCCESS
-YELLOW  = "\033[33m"
-RED     = "\033[31m"
-BRIGHT_RED = "\033[91m"
-WHITE   = "\033[97m"
-GREY    = "\033[90m"
-
-
-# ── Level config ──────────────────────────────────────────────────────────────
-
-_LEVELS = {
-    "DEBUG":   (CYAN,       "DBG"),
-    "INFO":    (PURPLE,     "INF"),
-    "SUCCESS": (MAGENTA,    "OK "),
-    "WARNING": (YELLOW,     "WRN"),
-    "ERROR":   (BRIGHT_RED, "ERR"),
-}
+    # Noxie palette
+    PURPLE  = "\033[38;5;141m"   # soft lavender — startup / info
+    MAGENTA = "\033[38;5;201m"   # vivid pink-purple — success
+    CYAN    = "\033[38;5;117m"   # cool blue — debug
+    YELLOW  = "\033[38;5;221m"   # warm amber — warning
+    RED     = "\033[38;5;204m"   # soft red — error
+    WHITE   = "\033[38;5;252m"   # near-white — message body
+    GREY    = "\033[38;5;240m"   # dark grey — timestamps / brackets
+    DARK    = "\033[38;5;235m"   # very dark — dividers
 
 
-# ── Logger ────────────────────────────────────────────────────────────────────
+# ── Internals ─────────────────────────────────────────────────────────────────
 
-class NoxieLogger:
-    """
-    Minimal structured logger with ANSI color output.
-    All output goes to stderr so it doesn't interfere with piped stdout.
-    """
-
-    def _write(self, level: str, message: str, exc: BaseException | None = None) -> None:
-        color, tag = _LEVELS.get(level, (WHITE, level[:3].upper()))
-        now = datetime.now().strftime("%H:%M:%S")
-
-        timestamp = f"{GREY}{now}{RESET}"
-        bracket   = f"{color}{BOLD}[{tag}]{RESET}"
-        text      = f"{WHITE}{message}{RESET}"
-
-        print(f"{timestamp} {bracket} {text}", file=sys.stderr)
-
-        if exc is not None:
-            tb = traceback.format_exception(type(exc), exc, exc.__traceback__)
-            for line in "".join(tb).rstrip().splitlines():
-                print(f"         {RED}{line}{RESET}", file=sys.stderr)
-
-    def debug(self, message: str, exc: BaseException | None = None) -> None:
-        self._write("DEBUG", message, exc)
-
-    def info(self, message: str, exc: BaseException | None = None) -> None:
-        self._write("INFO", message, exc)
-
-    def success(self, message: str, exc: BaseException | None = None) -> None:
-        self._write("SUCCESS", message, exc)
-
-    def warning(self, message: str, exc: BaseException | None = None) -> None:
-        self._write("WARNING", message, exc)
-
-    def error(self, message: str, exc: BaseException | None = None) -> None:
-        self._write("ERROR", message, exc)
+def _ts() -> str:
+    return datetime.now().strftime("%H:%M:%S")
 
 
-# ── Singleton ─────────────────────────────────────────────────────────────────
+def _fmt(level_color: str, level_label: str, message: str) -> str:
+    ts      = f"{_C.GREY}{_ts()}{_C.RESET}"
+    bracket = f"{_C.GREY}[{_C.RESET}"
+    level   = f"{level_color}{_C.BOLD}{level_label:<7}{_C.RESET}"
+    rb      = f"{_C.GREY}]{_C.RESET}"
+    body    = f"{_C.WHITE}{message}{_C.RESET}"
+    return f"{ts} {bracket}{level}{rb} {body}"
 
-log = NoxieLogger()
+
+# ── Public API ────────────────────────────────────────────────────────────────
+
+def info(message: str) -> None:
+    """General information — purple."""
+    print(_fmt(_C.PURPLE, "INFO", message), flush=True)
+
+
+def success(message: str) -> None:
+    """Positive outcome — magenta/pink."""
+    print(_fmt(_C.MAGENTA, "OK", message), flush=True)
+
+
+def warn(message: str) -> None:
+    """Soft warning — amber."""
+    print(_fmt(_C.YELLOW, "WARN", message), flush=True)
+
+
+def error(message: str, exc: BaseException | None = None) -> None:
+    """Error — red, with optional traceback."""
+    print(_fmt(_C.RED, "ERROR", message), flush=True)
+    if exc is not None:
+        tb = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+        for line in tb.rstrip().splitlines():
+            print(f"  {_C.DIM}{_C.RED}{line}{_C.RESET}", flush=True)
+
+
+def debug(message: str) -> None:
+    """Verbose debug — dim cyan."""
+    print(_fmt(_C.CYAN, "DEBUG", message), flush=True)
+
+
+def divider(label: str = "") -> None:
+    """Print a section divider that matches the bot's aesthetic."""
+    line = "─" * 48
+    if label:
+        padded = f" {label} "
+        half   = (48 - len(padded)) // 2
+        line   = "─" * half + padded + "─" * (48 - half - len(padded))
+    print(f"{_C.DARK}{line}{_C.RESET}", flush=True)
+
+
+def startup_banner() -> None:
+    """Print Noxie's startup banner."""
+    divider()
+    print(f"  {_C.PURPLE}{_C.BOLD}🌑  N O X I E{_C.RESET}  {_C.GREY}vibe engine · discord companion{_C.RESET}")
+    divider()

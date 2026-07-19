@@ -17,7 +17,7 @@ from discord.ext import commands
 
 from utils import economy, face_manager, personality
 from utils.economy import BADGE_DISPLAY
-from utils.logger import log
+from utils import logger
 from utils.cv2_helpers import _make_file, _media, _sep, send_cv2
 
 if TYPE_CHECKING:
@@ -95,7 +95,7 @@ class ProfileCog(commands.Cog, name="Profile"):
     ) -> None:
         target = user or interaction.user
         guild_id = str(interaction.guild_id)
-        log.info(f"profile: user={interaction.user.id} viewing={target.id} guild={guild_id}")
+        logger.info(f"profile: user={interaction.user.id} viewing={target.id} guild={guild_id}")
 
         try:
             bal    = economy.get_balance(self.bot.db, str(target.id), guild_id)
@@ -128,7 +128,7 @@ class ProfileCog(commands.Cog, name="Profile"):
             await send_cv2(interaction, comps, files)
 
         except Exception as e:
-            log.error(f"profile_slash failed: user={target.id}", exc=e)
+            logger.error(f"profile_slash failed: user={target.id}", exc=e)
             try:
                 await interaction.response.send_message("⚠️ couldn't load profile. try again?", ephemeral=True)
             except Exception:
@@ -144,7 +144,7 @@ class ProfileCog(commands.Cog, name="Profile"):
         """View your Noxie profile."""
         target = user or ctx.author
         guild_id = str(ctx.guild.id)
-        log.info(f"profile: user={ctx.author.id} viewing={target.id} guild={guild_id}")
+        logger.info(f"profile: user={ctx.author.id} viewing={target.id} guild={guild_id}")
 
         try:
             bal    = economy.get_balance(self.bot.db, str(target.id), guild_id)
@@ -177,7 +177,7 @@ class ProfileCog(commands.Cog, name="Profile"):
             await send_cv2(ctx, comps, files)
 
         except Exception as e:
-            log.error(f"profile_prefix failed: user={target.id}", exc=e)
+            logger.error(f"profile_prefix failed: user={target.id}", exc=e)
             try:
                 await ctx.send("⚠️ couldn't load profile. try again?")
             except Exception:

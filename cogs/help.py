@@ -14,9 +14,8 @@ from typing import TYPE_CHECKING
 import discord
 from discord.ext import commands
 
-from utils import face_manager
+from utils import face_manager, logger
 from utils.cv2_helpers import _make_file, _media, _sep, send_cv2
-from utils.logger import log
 
 if TYPE_CHECKING:
     from main import NoxieBot
@@ -110,7 +109,7 @@ class HelpCog(commands.Cog, name="Help"):
     @commands.command(name="help", aliases=["commands", "cmds"])
     async def help_cmd(self, ctx: commands.Context) -> None:
         """Show all Noxie commands."""
-        log.info(f"help: user={ctx.author.id} guild={ctx.guild.id if ctx.guild else 'DM'}")
+        logger.info(f"help: user={ctx.author.id} guild={ctx.guild.id if ctx.guild else 'DM'}")
         banner = face_manager.get_face_for_event("mood_neutral")
         comps, files = build_help_container(
             slash_ids=self.bot.slash_ids,
