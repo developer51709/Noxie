@@ -1,0 +1,5 @@
+# Database folder
+/db
+
+# Pycache
+*/__pycache__
