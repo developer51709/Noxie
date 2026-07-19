@@ -70,8 +70,7 @@ Edit `config.json`:
 {
   "bot_token": "YOUR_DISCORD_BOT_TOKEN",
   "global_prefix": "noxie ",
-  "oxapay_api_key": "YOUR_OXAPAY_API_KEY",
-  "oxapay_merchant": "YOUR_OXAPAY_MERCHANT_ID"
+  "oxapay_merchant_key": "YOUR_OXAPAY_MERCHANT_KEY"
 }
 ```
 
