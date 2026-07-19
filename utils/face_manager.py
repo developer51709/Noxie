@@ -1,11 +1,10 @@
 """
-face_manager.py — Manages Noxie's face assets and banner selection.
+utils/face_manager.py — Manages Noxie's face assets and banner selection.
 
 Maps events to the correct face image (mood banner) file path.
 """
 
-from pathlib import Path
-from modules.utils import ROOT, mood_banner_path
+from utils.helpers import mood_banner_path
 
 # ── Event → mood key mapping ────────────────────────────────────────────────
 

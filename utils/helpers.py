@@ -1,12 +1,10 @@
 """
-utils.py — Shared helpers for Noxie bot.
+utils/helpers.py — Shared helpers for Noxie bot.
 """
 
 import json
-import os
 import sqlite3
 from pathlib import Path
-from typing import Any
 
 
 ROOT = Path(__file__).resolve().parent.parent

@@ -1,5 +1,5 @@
 """
-personality.py — Noxie's personality engine.
+utils/personality.py — Noxie's personality engine.
 
 Noxie has four tones that rotate based on context:
   sarcastic | cozy | chaotic | deadpan
@@ -105,7 +105,6 @@ def get_line(event: str, streak: int = 0, luck: float = 0.5) -> str:
 
     # Bias selection based on streak/luck
     if streak >= 10 or luck > 0.8:
-        # prefer chaotic/cozy lines (even indices are deadpan/cozy, odd are chaotic/sarcastic)
         filtered = [l for l in pool if any(k in l for k in ["!!", "?", "WAIT", "hii", "OH", "oh"])]
         if filtered:
             return random.choice(filtered)
@@ -132,9 +131,9 @@ def vibe_status(streak: int, luck: float) -> str:
     """Human-readable vibe status string for profile displays."""
     tone = active_tone(streak, luck)
     statuses = {
-        "chaotic":  "⚡ full chaos mode",
-        "cozy":     "🌿 cozy and soft",
+        "chaotic":   "⚡ full chaos mode",
+        "cozy":      "🌿 cozy and soft",
         "sarcastic": "🌑 deeply unimpressed",
-        "deadpan":  "👁️ existing. barely.",
+        "deadpan":   "👁️ existing. barely.",
     }
     return statuses.get(tone, "🫧 undefined vibe")

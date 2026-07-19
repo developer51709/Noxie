@@ -1,5 +1,5 @@
 """
-economy.py — Noxie economy system.
+utils/economy.py — Noxie economy system.
 
 Currencies:
   - Glow Shards  (primary, earned from hunts and donations)
@@ -13,8 +13,8 @@ Tables:
 
 import sqlite3
 import time
-from typing import Optional
-from modules.utils import get_db_conn, load_config
+
+from utils.helpers import get_db_conn, load_config
 
 CONFIG = load_config()
 
