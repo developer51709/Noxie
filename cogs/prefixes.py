@@ -14,6 +14,7 @@ import discord
 from discord.ext import commands
 
 from utils.helpers import get_db_conn, load_config
+from utils.logger import log
 
 if TYPE_CHECKING:
     from main import NoxieBot
@@ -129,6 +130,7 @@ class PrefixCog(commands.Cog, name="Prefixes"):
         """Add a custom prefix for this server."""
         added = add_prefix(self.bot.db, str(ctx.guild.id), new_prefix)
         if added:
+            log.info(f"prefix added: guild={ctx.guild.id} prefix={new_prefix!r}")
             await ctx.send(f"✅ Prefix `{new_prefix}` added.", ephemeral=True)
         else:
             await ctx.send(
@@ -148,6 +150,7 @@ class PrefixCog(commands.Cog, name="Prefixes"):
             return
         removed = remove_prefix(self.bot.db, str(ctx.guild.id), prefix)
         if removed:
+            log.info(f"prefix removed: guild={ctx.guild.id} prefix={prefix!r}")
             await ctx.send(f"✅ Prefix `{prefix}` removed.", ephemeral=True)
         else:
             await ctx.send(f"❌ Prefix `{prefix}` was not found.", ephemeral=True)

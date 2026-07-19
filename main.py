@@ -28,6 +28,7 @@ from utils.helpers import load_config, get_db_conn
 from utils.economy import init_db as init_economy_db
 from utils import face_manager, personality
 from utils.cv2_helpers import build_face_reaction_container, send_cv2
+from utils.logger import log
 from cogs.prefixes import prefix_callable, init_prefix_table
 
 
@@ -40,6 +41,7 @@ class NoxieBot(commands.Bot):
     """The Noxie bot. Vibe engine. Character. Chaos."""
 
     db: sqlite3.Connection
+    slash_ids: dict[str, int]   # populated after tree.sync() in setup_hook
 
     def __init__(self) -> None:
         intents = discord.Intents.default()
@@ -67,22 +69,23 @@ class NoxieBot(commands.Bot):
             "cogs.hunt",
             "cogs.donate",
             "cogs.profile",
+            "cogs.help",
         ]
         for cog in cogs:
             try:
                 await self.load_extension(cog)
-                print(f"  ✓ loaded {cog}")
+                log.success(f"loaded {cog}")
             except Exception as e:
-                print(f"  ✗ failed to load {cog}: {e}")
-                traceback.print_exc()
+                log.error(f"failed to load {cog}", exc=e)
 
-        # Sync application commands globally
-        await self.tree.sync()
-        print("  ✓ slash commands synced")
+        # Sync application commands globally and store IDs for command links
+        synced = await self.tree.sync()
+        self.slash_ids = {cmd.name: cmd.id for cmd in synced}
+        log.success(f"slash commands synced ({len(synced)} registered)")
 
     async def on_ready(self) -> None:
-        print(f"\n🌑 Noxie is online — {self.user} ({self.user.id})")
-        print(f"   Serving {len(self.guilds)} guild(s)\n")
+        log.info(f"🌑 Noxie is online — {self.user} ({self.user.id})")
+        log.info(f"   serving {len(self.guilds)} guild(s)")
         await self.change_presence(
             activity=discord.Activity(
                 type=discord.ActivityType.watching,
@@ -110,7 +113,7 @@ class NoxieBot(commands.Bot):
                 break
 
     async def on_guild_remove(self, guild: discord.Guild) -> None:
-        print(f"Left guild: {guild.name} ({guild.id})")
+        log.info(f"left guild: {guild.name} ({guild.id})")
 
     async def on_command_error(
         self, ctx: commands.Context, error: commands.CommandError
@@ -147,7 +150,7 @@ class NoxieBot(commands.Bot):
                 color=0xE74C3C,
             )
             await send_cv2(ctx, comps, files)
-            traceback.print_exception(type(error), error, error.__traceback__)
+            log.error(f"unhandled prefix command error: {error}", exc=error)
 
     async def on_app_command_error(
         self,
@@ -163,34 +166,7 @@ class NoxieBot(commands.Bot):
             color=0xE74C3C,
         )
         await send_cv2(interaction, comps, files, ephemeral=True)
-        traceback.print_exception(type(error), error, error.__traceback__)
-
-
-# ── Custom help command (prefix) ─────────────────────────────────────────────
-
-async def _send_help(ctx: commands.Context) -> None:
-    banner = face_manager.get_face_for_event("mood_neutral")
-    comps, files = build_face_reaction_container(
-        message=(
-            "## 👁️  noxie commands\n\n"
-            "**Hunting**\n"
-            "`noxie hunt` / `/hunt` — catch a vibe creature\n"
-            "`noxie inventory` / `/inventory` — view your collection\n"
-            "`noxie vibe` / `/vibe` — check your vibe status\n\n"
-            "**Profile**\n"
-            "`noxie profile` / `/profile` — your mood pulse\n\n"
-            "**Donation**\n"
-            "`noxie donate <amount> [currency]` / `/donate` — support Noxie via crypto\n\n"
-            "**Prefixes**\n"
-            "`noxie prefix` — list active prefixes\n"
-            "`noxie prefix add <prefix>` — add a custom prefix\n"
-            "`noxie prefix remove <prefix>` — remove a custom prefix\n\n"
-            "*The global prefix `noxie ` is always active.*"
-        ),
-        banner_path=banner,
-        color=0x7930A7,
-    )
-    await send_cv2(ctx, comps, files)
+        log.error(f"unhandled slash command error: {error}", exc=error)
 
 
 # ── Entry point ──────────────────────────────────────────────────────────────
@@ -205,10 +181,6 @@ async def main() -> None:
         return
 
     bot = NoxieBot()
-
-    @bot.command(name="help", aliases=["commands", "cmds"])
-    async def help_cmd(ctx: commands.Context) -> None:
-        await _send_help(ctx)
 
     async with bot:
         await bot.start(token)

@@ -24,6 +24,7 @@ from discord.ext import commands
 
 from utils import economy, face_manager, personality
 from utils.helpers import load_creatures, load_config, ROOT
+from utils.logger import log
 from utils.cv2_helpers import (
     RARITY_COLORS,
     _make_file,
@@ -255,68 +256,84 @@ async def do_hunt(
     """
     Run a full hunt flow: cooldown check → roll → record → build CV2 → send.
     """
-    # Cooldown check
-    remaining = economy.check_hunt_cooldown(bot.db, user_id, guild_id)
-    if remaining > 0:
-        line = personality.get_line("cooldown")
-        banner_path = face_manager.get_face_for_event("cooldown")
-        comps, files = build_face_reaction_container(
-            message=f"⏳ **cooldown:** {remaining:.1f}s remaining\n*{line}*",
-            banner_path=banner_path,
-            color=0x4A4A4A,
+    try:
+        # Cooldown check
+        remaining = economy.check_hunt_cooldown(bot.db, user_id, guild_id)
+        if remaining > 0:
+            log.debug(f"hunt cooldown: user={user_id} remaining={remaining:.1f}s")
+            line = personality.get_line("cooldown")
+            banner_path = face_manager.get_face_for_event("cooldown")
+            comps, files = build_face_reaction_container(
+                message=f"⏳ **cooldown:** {remaining:.1f}s remaining\n*{line}*",
+                banner_path=banner_path,
+                color=0x4A4A4A,
+            )
+            await send_cv2(target, comps, files)
+            return
+
+        # Roll rarity + creature
+        rarity   = roll_rarity()
+        creature = roll_creature(rarity)
+        glow, coins = roll_rewards(rarity)
+        luck = RARITY_LUCK.get(rarity, 0.3)
+
+        log.info(f"hunt: user={user_id} rolled {rarity} — {creature['name']} (+{glow}gs +{coins}vc)")
+
+        # Record to DB
+        bal = economy.record_hunt(bot.db, user_id, guild_id, glow, coins)
+        economy.add_to_inventory(bot.db, user_id, guild_id, creature["id"])
+
+        # Award milestone badges
+        total = bal["total_hunts"]
+        if total >= 100:
+            if economy.award_badge(bot.db, user_id, "hunter_100"):
+                log.success(f"badge awarded: user={user_id} hunter_100")
+        elif total >= 50:
+            if economy.award_badge(bot.db, user_id, "hunter_50"):
+                log.success(f"badge awarded: user={user_id} hunter_50")
+        elif total >= 10:
+            if economy.award_badge(bot.db, user_id, "hunter_10"):
+                log.success(f"badge awarded: user={user_id} hunter_10")
+        if rarity == "legendary":
+            if economy.award_badge(bot.db, user_id, "legendary"):
+                log.success(f"badge awarded: user={user_id} legendary")
+        if rarity == "mythic":
+            if economy.award_badge(bot.db, user_id, "mythic"):
+                log.success(f"badge awarded: user={user_id} mythic")
+
+        # Personality line
+        event = "hunt_rare" if rarity in ("legendary", "mythic", "epic") else "hunt_success"
+        line = personality.get_line(event, streak=bal["hunt_streak"], luck=luck)
+
+        # Banner selection
+        banner_path = face_manager.get_face_for_rarity(rarity)
+        creature_mood_banner = face_manager.get_face_for_creature_mood(creature.get("mood", "neutral"))
+        final_banner = creature_mood_banner or banner_path
+
+        # Creature artwork path
+        art_file = creature.get("art_file", "")
+        art_path = str(ROOT / "vibe_creatures" / art_file) if art_file else None
+        if art_path and not os.path.exists(art_path):
+            art_path = None
+
+        # Build and send CV2
+        comps, files = build_hunt_container(
+            creature=creature,
+            glow_earned=glow,
+            coins_earned=coins,
+            total_hunts=total,
+            personality_line=line,
+            art_path=art_path,
+            banner_path=final_banner,
         )
         await send_cv2(target, comps, files)
-        return
 
-    # Roll rarity + creature
-    rarity   = roll_rarity()
-    creature = roll_creature(rarity)
-    glow, coins = roll_rewards(rarity)
-    luck = RARITY_LUCK.get(rarity, 0.3)
-
-    # Record to DB
-    bal = economy.record_hunt(bot.db, user_id, guild_id, glow, coins)
-    economy.add_to_inventory(bot.db, user_id, guild_id, creature["id"])
-
-    # Award milestone badges
-    total = bal["total_hunts"]
-    if total >= 100:
-        economy.award_badge(bot.db, user_id, "hunter_100")
-    elif total >= 50:
-        economy.award_badge(bot.db, user_id, "hunter_50")
-    elif total >= 10:
-        economy.award_badge(bot.db, user_id, "hunter_10")
-    if rarity == "legendary":
-        economy.award_badge(bot.db, user_id, "legendary")
-    if rarity == "mythic":
-        economy.award_badge(bot.db, user_id, "mythic")
-
-    # Personality line
-    event = "hunt_rare" if rarity in ("legendary", "mythic", "epic") else "hunt_success"
-    line = personality.get_line(event, streak=bal["hunt_streak"], luck=luck)
-
-    # Banner selection
-    banner_path = face_manager.get_face_for_rarity(rarity)
-    creature_mood_banner = face_manager.get_face_for_creature_mood(creature.get("mood", "neutral"))
-    final_banner = creature_mood_banner or banner_path
-
-    # Creature artwork path
-    art_file = creature.get("art_file", "")
-    art_path = str(ROOT / "vibe_creatures" / art_file) if art_file else None
-    if art_path and not os.path.exists(art_path):
-        art_path = None
-
-    # Build and send CV2
-    comps, files = build_hunt_container(
-        creature=creature,
-        glow_earned=glow,
-        coins_earned=coins,
-        total_hunts=total,
-        personality_line=line,
-        art_path=art_path,
-        banner_path=final_banner,
-    )
-    await send_cv2(target, comps, files)
+    except Exception as e:
+        log.error(f"do_hunt failed: user={user_id} guild={guild_id}", exc=e)
+        try:
+            await target.send("⚠️ something went wrong with the hunt. try again?")
+        except Exception:
+            pass
 
 
 # ── Cog ───────────────────────────────────────────────────────────────────────

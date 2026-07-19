@@ -17,6 +17,7 @@ from discord.ext import commands
 
 from utils import economy, face_manager, personality
 from utils.economy import BADGE_DISPLAY
+from utils.logger import log
 from utils.cv2_helpers import _make_file, _media, _sep, send_cv2
 
 if TYPE_CHECKING:
@@ -94,35 +95,44 @@ class ProfileCog(commands.Cog, name="Profile"):
     ) -> None:
         target = user or interaction.user
         guild_id = str(interaction.guild_id)
+        log.info(f"profile: user={interaction.user.id} viewing={target.id} guild={guild_id}")
 
-        bal    = economy.get_balance(self.bot.db, str(target.id), guild_id)
-        badges = economy.get_badges(self.bot.db, str(target.id))
+        try:
+            bal    = economy.get_balance(self.bot.db, str(target.id), guild_id)
+            badges = economy.get_badges(self.bot.db, str(target.id))
 
-        streak = bal["hunt_streak"]
-        luck   = min(1.0, streak / 20.0)
-        vibe   = personality.vibe_status(streak, luck)
+            streak = bal["hunt_streak"]
+            luck   = min(1.0, streak / 20.0)
+            vibe   = personality.vibe_status(streak, luck)
 
-        tone = personality.active_tone(streak, luck)
-        tone_to_event = {
-            "chaotic":   "reaction_evil",
-            "cozy":      "reaction_cozy",
-            "sarcastic": "hunt_fail",
-            "deadpan":   "mood_neutral",
-        }
-        banner_path = face_manager.get_face_for_event(tone_to_event.get(tone, "mood_neutral"))
+            tone = personality.active_tone(streak, luck)
+            tone_to_event = {
+                "chaotic":   "reaction_evil",
+                "cozy":      "reaction_cozy",
+                "sarcastic": "hunt_fail",
+                "deadpan":   "mood_neutral",
+            }
+            banner_path = face_manager.get_face_for_event(tone_to_event.get(tone, "mood_neutral"))
 
-        comps, files = build_mood_pulse_container(
-            user_name=target.display_name,
-            vibe_status=vibe,
-            streak=streak,
-            glow_shards=bal["glow_shards"],
-            vibe_coins=bal["vibe_coins"],
-            total_hunts=bal["total_hunts"],
-            badges=badges,
-            banner_path=banner_path,
-            badge_display=BADGE_DISPLAY,
-        )
-        await send_cv2(interaction, comps, files)
+            comps, files = build_mood_pulse_container(
+                user_name=target.display_name,
+                vibe_status=vibe,
+                streak=streak,
+                glow_shards=bal["glow_shards"],
+                vibe_coins=bal["vibe_coins"],
+                total_hunts=bal["total_hunts"],
+                badges=badges,
+                banner_path=banner_path,
+                badge_display=BADGE_DISPLAY,
+            )
+            await send_cv2(interaction, comps, files)
+
+        except Exception as e:
+            log.error(f"profile_slash failed: user={target.id}", exc=e)
+            try:
+                await interaction.response.send_message("⚠️ couldn't load profile. try again?", ephemeral=True)
+            except Exception:
+                pass
 
     # ── prefix profile ───────────────────────────────────────────────────────
 
@@ -134,35 +144,44 @@ class ProfileCog(commands.Cog, name="Profile"):
         """View your Noxie profile."""
         target = user or ctx.author
         guild_id = str(ctx.guild.id)
+        log.info(f"profile: user={ctx.author.id} viewing={target.id} guild={guild_id}")
 
-        bal    = economy.get_balance(self.bot.db, str(target.id), guild_id)
-        badges = economy.get_badges(self.bot.db, str(target.id))
+        try:
+            bal    = economy.get_balance(self.bot.db, str(target.id), guild_id)
+            badges = economy.get_badges(self.bot.db, str(target.id))
 
-        streak = bal["hunt_streak"]
-        luck   = min(1.0, streak / 20.0)
-        vibe   = personality.vibe_status(streak, luck)
+            streak = bal["hunt_streak"]
+            luck   = min(1.0, streak / 20.0)
+            vibe   = personality.vibe_status(streak, luck)
 
-        tone = personality.active_tone(streak, luck)
-        tone_to_event = {
-            "chaotic":   "reaction_evil",
-            "cozy":      "reaction_cozy",
-            "sarcastic": "hunt_fail",
-            "deadpan":   "mood_neutral",
-        }
-        banner_path = face_manager.get_face_for_event(tone_to_event.get(tone, "mood_neutral"))
+            tone = personality.active_tone(streak, luck)
+            tone_to_event = {
+                "chaotic":   "reaction_evil",
+                "cozy":      "reaction_cozy",
+                "sarcastic": "hunt_fail",
+                "deadpan":   "mood_neutral",
+            }
+            banner_path = face_manager.get_face_for_event(tone_to_event.get(tone, "mood_neutral"))
 
-        comps, files = build_mood_pulse_container(
-            user_name=target.display_name,
-            vibe_status=vibe,
-            streak=streak,
-            glow_shards=bal["glow_shards"],
-            vibe_coins=bal["vibe_coins"],
-            total_hunts=bal["total_hunts"],
-            badges=badges,
-            banner_path=banner_path,
-            badge_display=BADGE_DISPLAY,
-        )
-        await send_cv2(ctx, comps, files)
+            comps, files = build_mood_pulse_container(
+                user_name=target.display_name,
+                vibe_status=vibe,
+                streak=streak,
+                glow_shards=bal["glow_shards"],
+                vibe_coins=bal["vibe_coins"],
+                total_hunts=bal["total_hunts"],
+                badges=badges,
+                banner_path=banner_path,
+                badge_display=BADGE_DISPLAY,
+            )
+            await send_cv2(ctx, comps, files)
+
+        except Exception as e:
+            log.error(f"profile_prefix failed: user={target.id}", exc=e)
+            try:
+                await ctx.send("⚠️ couldn't load profile. try again?")
+            except Exception:
+                pass
 
 
 async def setup(bot: "NoxieBot") -> None:
