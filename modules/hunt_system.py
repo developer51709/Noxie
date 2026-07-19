@@ -4,6 +4,10 @@ hunt_system.py — Vibe creature hunt system.
 Commands:
   /hunt          (slash)
   noxie hunt     (prefix)
+  /inventory     (slash)
+  noxie inventory (prefix)
+  /vibe          (slash)
+  noxie vibe     (prefix)
 """
 
 from __future__ import annotations
@@ -15,7 +19,7 @@ import discord
 from discord.ext import commands
 from discord import app_commands
 
-from modules import economy, cv2_engine, face_manager, personality
+from modules import economy, cv2_engine, face_manager, personality, logger
 from modules.utils import load_creatures, load_config, RARITY_MOOD, CREATURE_MOOD_BANNER, ROOT
 
 if TYPE_CHECKING:
@@ -114,13 +118,17 @@ async def do_hunt(
     if rarity == "mythic":
         economy.award_badge(bot.db, user_id, "mythic")
 
+    logger.debug(
+        f"hunt: user={user_id} guild={guild_id} rarity={rarity} "
+        f"creature={creature['name']} glow={glow} coins={coins}"
+    )
+
     # Personality line
     event = "hunt_rare" if rarity in ("legendary", "mythic", "epic") else "hunt_success"
     line = personality.get_line(event, streak=bal["hunt_streak"], luck=luck)
 
     # Face/banner selection
     banner_path = face_manager.get_face_for_rarity(rarity)
-    # Prefer creature's own mood banner if available
     creature_mood_banner = face_manager.get_face_for_creature_mood(creature.get("mood", "neutral"))
     final_banner = creature_mood_banner or banner_path
 
@@ -130,7 +138,7 @@ async def do_hunt(
     if art_path and not __import__("os").path.exists(art_path):
         art_path = None
 
-    # Build CV2
+    # Build and send CV2
     comps, files = cv2_engine.build_hunt_container(
         creature=creature,
         glow_earned=glow,
@@ -151,33 +159,42 @@ class HuntCog(commands.Cog, name="Hunt"):
     def __init__(self, bot: "NoxieBot") -> None:
         self.bot = bot
 
-    # ── Slash command ────────────────────────────────────────────────────────
+    # ── /hunt slash ──────────────────────────────────────────────────────────
 
     @app_commands.command(name="hunt", description="Hunt for a vibe creature!")
     @app_commands.guild_only()
     async def hunt_slash(self, interaction: discord.Interaction) -> None:
-        await interaction.response.defer()
-        await do_hunt(
-            self.bot,
-            str(interaction.user.id),
-            str(interaction.guild_id),
-            interaction,
-        )
+        # Do NOT defer — send_cv2 uses response.send_message() directly,
+        # which is the reliable path for CV2 flags.
+        try:
+            await do_hunt(
+                self.bot,
+                str(interaction.user.id),
+                str(interaction.guild_id),
+                interaction,
+            )
+        except Exception as exc:
+            logger.error(f"hunt slash error for user={interaction.user.id}", exc=exc)
+            await _slash_error_response(interaction)
 
-    # ── Prefix command ───────────────────────────────────────────────────────
+    # ── prefix hunt ──────────────────────────────────────────────────────────
 
     @commands.command(name="hunt", aliases=["h"])
     @commands.guild_only()
     async def hunt_prefix(self, ctx: commands.Context) -> None:
         """Hunt for a vibe creature."""
-        await do_hunt(
-            self.bot,
-            str(ctx.author.id),
-            str(ctx.guild.id),
-            ctx,
-        )
+        try:
+            await do_hunt(
+                self.bot,
+                str(ctx.author.id),
+                str(ctx.guild.id),
+                ctx,
+            )
+        except Exception as exc:
+            logger.error(f"hunt prefix error for user={ctx.author.id}", exc=exc)
+            await ctx.send("⚠️ something went sideways with that hunt. try again.")
 
-    # ── /inventory slash ─────────────────────────────────────────────────────
+    # ── /inventory slash ──────────────────────────────────────────────────────
 
     @app_commands.command(name="inventory", description="View your vibe creature collection.")
     @app_commands.guild_only()
@@ -185,114 +202,144 @@ class HuntCog(commands.Cog, name="Hunt"):
     async def inventory_slash(
         self, interaction: discord.Interaction, page: int = 1
     ) -> None:
-        await interaction.response.defer()
-        inv = economy.get_inventory(
-            self.bot.db, str(interaction.user.id), str(interaction.guild_id)
-        )
-        if not inv:
-            line = personality.get_line("inventory_empty")
-            banner_path = face_manager.get_face_for_event("hunt_fail")
-            comps, files = cv2_engine.build_face_reaction_container(
-                message=f"*{line}*", banner_path=banner_path, color=0x4A4A4A
+        try:
+            inv = economy.get_inventory(
+                self.bot.db, str(interaction.user.id), str(interaction.guild_id)
+            )
+            if not inv:
+                line = personality.get_line("inventory_empty")
+                banner_path = face_manager.get_face_for_event("hunt_fail")
+                comps, files = cv2_engine.build_face_reaction_container(
+                    message=f"*{line}*", banner_path=banner_path, color=0x4A4A4A
+                )
+                await cv2_engine.send_cv2(interaction, comps, files)
+                return
+
+            counts: dict[str, int] = {}
+            for row in inv:
+                cid = row["creature_id"]
+                counts[cid] = counts.get(cid, 0) + 1
+
+            comps, files = cv2_engine.build_inventory_container(
+                user_name=interaction.user.display_name,
+                creature_counts=counts,
+                all_creatures=CREATURE_MAP,
+                page=page,
             )
             await cv2_engine.send_cv2(interaction, comps, files)
-            return
+        except Exception as exc:
+            logger.error(f"inventory slash error for user={interaction.user.id}", exc=exc)
+            await _slash_error_response(interaction)
 
-        # Count creatures
-        counts: dict[str, int] = {}
-        for row in inv:
-            cid = row["creature_id"]
-            counts[cid] = counts.get(cid, 0) + 1
-
-        comps, files = cv2_engine.build_inventory_container(
-            user_name=interaction.user.display_name,
-            creature_counts=counts,
-            all_creatures=CREATURE_MAP,
-            page=page,
-        )
-        await cv2_engine.send_cv2(interaction, comps, files)
-
-    # ── prefix inventory ─────────────────────────────────────────────────────
+    # ── prefix inventory ──────────────────────────────────────────────────────
 
     @commands.command(name="inventory", aliases=["inv", "bag"])
     @commands.guild_only()
     async def inventory_prefix(self, ctx: commands.Context, page: int = 1) -> None:
         """View your vibe creature collection."""
-        inv = economy.get_inventory(self.bot.db, str(ctx.author.id), str(ctx.guild.id))
-        if not inv:
-            line = personality.get_line("inventory_empty")
-            banner_path = face_manager.get_face_for_event("hunt_fail")
-            comps, files = cv2_engine.build_face_reaction_container(
-                message=f"*{line}*", banner_path=banner_path, color=0x4A4A4A
+        try:
+            inv = economy.get_inventory(self.bot.db, str(ctx.author.id), str(ctx.guild.id))
+            if not inv:
+                line = personality.get_line("inventory_empty")
+                banner_path = face_manager.get_face_for_event("hunt_fail")
+                comps, files = cv2_engine.build_face_reaction_container(
+                    message=f"*{line}*", banner_path=banner_path, color=0x4A4A4A
+                )
+                await cv2_engine.send_cv2(ctx, comps, files)
+                return
+
+            counts: dict[str, int] = {}
+            for row in inv:
+                cid = row["creature_id"]
+                counts[cid] = counts.get(cid, 0) + 1
+
+            comps, files = cv2_engine.build_inventory_container(
+                user_name=ctx.author.display_name,
+                creature_counts=counts,
+                all_creatures=CREATURE_MAP,
+                page=page,
             )
             await cv2_engine.send_cv2(ctx, comps, files)
-            return
+        except Exception as exc:
+            logger.error(f"inventory prefix error for user={ctx.author.id}", exc=exc)
+            await ctx.send("⚠️ couldn't fetch your inventory. try again.")
 
-        counts: dict[str, int] = {}
-        for row in inv:
-            cid = row["creature_id"]
-            counts[cid] = counts.get(cid, 0) + 1
-
-        comps, files = cv2_engine.build_inventory_container(
-            user_name=ctx.author.display_name,
-            creature_counts=counts,
-            all_creatures=CREATURE_MAP,
-            page=page,
-        )
-        await cv2_engine.send_cv2(ctx, comps, files)
-
-    # ── /vibe slash ──────────────────────────────────────────────────────────
+    # ── /vibe slash ───────────────────────────────────────────────────────────
 
     @app_commands.command(name="vibe", description="Check your current vibe energy.")
     @app_commands.guild_only()
     async def vibe_slash(self, interaction: discord.Interaction) -> None:
-        await interaction.response.defer()
-        bal = economy.get_balance(
-            self.bot.db, str(interaction.user.id), str(interaction.guild_id)
-        )
-        streak = bal["hunt_streak"]
-        luck   = min(1.0, streak / 20.0)
-        vibe   = personality.vibe_status(streak, luck)
-        line   = personality.get_line("hunt_success", streak=streak, luck=luck)
-        banner_path = face_manager.get_face_for_event(
-            "reaction_uwu" if luck > 0.7 else "mood_neutral"
-        )
-        comps, files = cv2_engine.build_face_reaction_container(
-            message=(
-                f"## ✨ Vibe Check — {interaction.user.display_name}\n"
-                f"**Status:** {vibe}\n"
-                f"**Streak:** 🔥 {streak}\n\n"
-                f"*{line}*"
-            ),
-            banner_path=banner_path,
-            color=0x9B59B6,
-        )
-        await cv2_engine.send_cv2(interaction, comps, files)
+        try:
+            bal = economy.get_balance(
+                self.bot.db, str(interaction.user.id), str(interaction.guild_id)
+            )
+            streak = bal["hunt_streak"]
+            luck   = min(1.0, streak / 20.0)
+            vibe   = personality.vibe_status(streak, luck)
+            line   = personality.get_line("hunt_success", streak=streak, luck=luck)
+            banner_path = face_manager.get_face_for_event(
+                "reaction_uwu" if luck > 0.7 else "mood_neutral"
+            )
+            comps, files = cv2_engine.build_face_reaction_container(
+                message=(
+                    f"## ✨ Vibe Check — {interaction.user.display_name}\n"
+                    f"**Status:** {vibe}\n"
+                    f"**Streak:** 🔥 {streak}\n\n"
+                    f"*{line}*"
+                ),
+                banner_path=banner_path,
+                color=0x9B59B6,
+            )
+            await cv2_engine.send_cv2(interaction, comps, files)
+        except Exception as exc:
+            logger.error(f"vibe slash error for user={interaction.user.id}", exc=exc)
+            await _slash_error_response(interaction)
+
+    # ── prefix vibe ───────────────────────────────────────────────────────────
 
     @commands.command(name="vibe")
     @commands.guild_only()
     async def vibe_prefix(self, ctx: commands.Context) -> None:
         """Check your current vibe energy."""
-        bal = economy.get_balance(self.bot.db, str(ctx.author.id), str(ctx.guild.id))
-        streak = bal["hunt_streak"]
-        luck   = min(1.0, streak / 20.0)
-        vibe   = personality.vibe_status(streak, luck)
-        line   = personality.get_line("hunt_success", streak=streak, luck=luck)
-        banner_path = face_manager.get_face_for_event(
-            "reaction_uwu" if luck > 0.7 else "mood_neutral"
-        )
-        comps, files = cv2_engine.build_face_reaction_container(
-            message=(
-                f"## ✨ Vibe Check — {ctx.author.display_name}\n"
-                f"**Status:** {vibe}\n"
-                f"**Streak:** 🔥 {streak}\n\n"
-                f"*{line}*"
-            ),
-            banner_path=banner_path,
-            color=0x9B59B6,
-        )
-        await cv2_engine.send_cv2(ctx, comps, files)
+        try:
+            bal = economy.get_balance(self.bot.db, str(ctx.author.id), str(ctx.guild.id))
+            streak = bal["hunt_streak"]
+            luck   = min(1.0, streak / 20.0)
+            vibe   = personality.vibe_status(streak, luck)
+            line   = personality.get_line("hunt_success", streak=streak, luck=luck)
+            banner_path = face_manager.get_face_for_event(
+                "reaction_uwu" if luck > 0.7 else "mood_neutral"
+            )
+            comps, files = cv2_engine.build_face_reaction_container(
+                message=(
+                    f"## ✨ Vibe Check — {ctx.author.display_name}\n"
+                    f"**Status:** {vibe}\n"
+                    f"**Streak:** 🔥 {streak}\n\n"
+                    f"*{line}*"
+                ),
+                banner_path=banner_path,
+                color=0x9B59B6,
+            )
+            await cv2_engine.send_cv2(ctx, comps, files)
+        except Exception as exc:
+            logger.error(f"vibe prefix error for user={ctx.author.id}", exc=exc)
+            await ctx.send("⚠️ vibe check failed. the vibe itself is broken.")
+
+
+# ── Slash error fallback ──────────────────────────────────────────────────────
+
+async def _slash_error_response(interaction: discord.Interaction) -> None:
+    """Send a plain-text error ack when CV2 building itself fails."""
+    try:
+        msg = "⚠️ something went sideways. try again."
+        if interaction.response.is_done():
+            await interaction.followup.send(msg, ephemeral=True)
+        else:
+            await interaction.response.send_message(msg, ephemeral=True)
+    except Exception:
+        pass  # nothing left to do
 
 
 async def setup(bot: "NoxieBot") -> None:
     await bot.add_cog(HuntCog(bot))
+    logger.success("HuntCog loaded")

@@ -27,7 +27,7 @@ from discord.ext import commands
 from modules.utils import load_config, get_db_conn, ROOT
 from modules.prefixes import prefix_callable, init_prefix_table
 from modules.economy import init_db as init_economy_db
-from modules import cv2_engine, face_manager, personality
+from modules import cv2_engine, face_manager, personality, logger
 
 
 CONFIG = load_config()
@@ -48,19 +48,20 @@ class NoxieBot(commands.Bot):
         super().__init__(
             command_prefix=prefix_callable,
             intents=intents,
-            help_command=None,          # we'll add a custom one or just skip it
+            help_command=None,
             case_insensitive=True,
             strip_after_prefix=True,
         )
 
     async def setup_hook(self) -> None:
-        """Called before bot starts. Load cogs + sync slash commands."""
-        # Connect DB
+        """Called before bot starts. Initialise DB, load cogs, sync slash commands."""
+        # ── Database ──────────────────────────────────────────────────────────
         self.db = get_db_conn(CONFIG)
         init_prefix_table(self.db)
         init_economy_db(self.db)
+        logger.success("database initialised")
 
-        # Load all cogs
+        # ── Cogs ──────────────────────────────────────────────────────────────
         cogs = [
             "modules.prefixes",
             "modules.hunt_system",
@@ -70,18 +71,23 @@ class NoxieBot(commands.Bot):
         for cog in cogs:
             try:
                 await self.load_extension(cog)
-                print(f"  ✓ loaded {cog}")
-            except Exception as e:
-                print(f"  ✗ failed to load {cog}: {e}")
-                traceback.print_exc()
+                # Individual cog setup() functions log their own success lines
+            except Exception as exc:
+                logger.error(f"failed to load cog: {cog}", exc=exc)
 
-        # Sync application commands globally
-        await self.tree.sync()
-        print("  ✓ slash commands synced")
+        # ── Sync slash commands ───────────────────────────────────────────────
+        try:
+            synced = await self.tree.sync()
+            logger.success(f"slash commands synced ({len(synced)} commands)")
+        except Exception as exc:
+            logger.error("slash command sync failed", exc=exc)
 
     async def on_ready(self) -> None:
-        print(f"\n🌑 Noxie is online — {self.user} ({self.user.id})")
-        print(f"   Serving {len(self.guilds)} guild(s)\n")
+        logger.divider()
+        logger.info(f"logged in as  {self.user}  ({self.user.id})")
+        logger.info(f"serving       {len(self.guilds)} guild(s)")
+        logger.divider()
+
         await self.change_presence(
             activity=discord.Activity(
                 type=discord.ActivityType.watching,
@@ -91,31 +97,39 @@ class NoxieBot(commands.Bot):
 
     async def on_guild_join(self, guild: discord.Guild) -> None:
         """Greet a new server with a face reaction."""
+        logger.info(f"joined guild: {guild.name} ({guild.id})")
         line = personality.get_line("greeting")
         banner = face_manager.get_face_for_event("guild_join")
         comps, files = cv2_engine.build_face_reaction_container(
-            message=f"## 👁️ noxie has arrived.\n\n{line}\n\n"
-                    f"Use `noxie hunt` to start catching vibe creatures.\n"
-                    f"Use `noxie help` for all commands.",
+            message=(
+                f"## 👁️ noxie has arrived.\n\n{line}\n\n"
+                f"Use `noxie hunt` to start catching vibe creatures.\n"
+                f"Use `noxie help` for all commands."
+            ),
             banner_path=banner,
             color=0x7930A7,
         )
-        # Try to find a suitable channel
         for channel in guild.text_channels:
             if channel.permissions_for(guild.me).send_messages:
                 try:
                     await cv2_engine.send_cv2(channel, comps, files)
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.warn(f"guild_join greeting failed in #{channel.name}: {exc}")
                 break
 
     async def on_guild_remove(self, guild: discord.Guild) -> None:
-        print(f"Left guild: {guild.name} ({guild.id})")
+        logger.info(f"left guild: {guild.name} ({guild.id})")
+
+    # ── Global prefix command error handler ───────────────────────────────────
 
     async def on_command_error(
         self, ctx: commands.Context, error: commands.CommandError
     ) -> None:
-        """Global prefix command error handler."""
+        """Catch-all for prefix command errors."""
+
+        # Unwrap CheckFailure chains
+        original = getattr(error, "original", error)
+
         if isinstance(error, commands.CommandOnCooldown):
             line = personality.get_line("cooldown")
             banner = face_manager.get_face_for_event("cooldown")
@@ -124,7 +138,10 @@ class NoxieBot(commands.Bot):
                 banner_path=banner,
                 color=0x4A4A4A,
             )
-            await cv2_engine.send_cv2(ctx, comps, files)
+            try:
+                await cv2_engine.send_cv2(ctx, comps, files)
+            except Exception as exc:
+                logger.error("cooldown response send failed", exc=exc)
 
         elif isinstance(error, commands.MissingPermissions):
             await ctx.send("❌ You don't have permission to do that.", delete_after=5)
@@ -138,7 +155,19 @@ class NoxieBot(commands.Bot):
                 f"Use `noxie help` for usage details.",
                 delete_after=8,
             )
+
+        elif isinstance(error, commands.BadArgument):
+            await ctx.send(
+                f"❌ Bad argument — {error}\nUse `noxie help` for usage details.",
+                delete_after=8,
+            )
+
         else:
+            logger.error(
+                f"unhandled prefix command error in {ctx.command!r} "
+                f"for user={ctx.author.id}",
+                exc=original,
+            )
             line = personality.get_line("error")
             banner = face_manager.get_face_for_event("error")
             comps, files = cv2_engine.build_face_reaction_container(
@@ -146,16 +175,28 @@ class NoxieBot(commands.Bot):
                 banner_path=banner,
                 color=0xE74C3C,
             )
-            await cv2_engine.send_cv2(ctx, comps, files)
-            # Log it
-            traceback.print_exception(type(error), error, error.__traceback__)
+            try:
+                await cv2_engine.send_cv2(ctx, comps, files)
+            except Exception as exc:
+                logger.error("error response send failed", exc=exc)
+                await ctx.send("⚠️ something went wrong. check the logs.")
+
+    # ── Global slash command error handler ────────────────────────────────────
 
     async def on_app_command_error(
         self,
         interaction: discord.Interaction,
         error: discord.app_commands.AppCommandError,
     ) -> None:
-        """Global slash command error handler."""
+        """Catch-all for slash command errors."""
+        original = getattr(error, "original", error)
+        logger.error(
+            f"unhandled slash command error "
+            f"cmd={getattr(interaction.command, 'name', '?')} "
+            f"user={interaction.user.id}",
+            exc=original,
+        )
+
         line = personality.get_line("error")
         banner = face_manager.get_face_for_event("error")
         comps, files = cv2_engine.build_face_reaction_container(
@@ -163,11 +204,22 @@ class NoxieBot(commands.Bot):
             banner_path=banner,
             color=0xE74C3C,
         )
-        await cv2_engine.send_cv2(interaction, comps, files, ephemeral=True)
-        traceback.print_exception(type(error), error, error.__traceback__)
+        try:
+            await cv2_engine.send_cv2(interaction, comps, files, ephemeral=True)
+        except Exception as exc:
+            logger.error("slash error response send failed", exc=exc)
+            # Last-resort plain-text fallback
+            try:
+                msg = "⚠️ something broke. try again."
+                if interaction.response.is_done():
+                    await interaction.followup.send(msg, ephemeral=True)
+                else:
+                    await interaction.response.send_message(msg, ephemeral=True)
+            except Exception:
+                pass
 
 
-# ── Custom help command (prefix) ─────────────────────────────────────────────
+# ── Custom help command ───────────────────────────────────────────────────────
 
 async def _send_help(ctx: commands.Context) -> None:
     bot: NoxieBot = ctx.bot
@@ -192,23 +244,30 @@ async def _send_help(ctx: commands.Context) -> None:
         banner_path=banner,
         color=0x7930A7,
     )
-    await cv2_engine.send_cv2(ctx, comps, files)
+    try:
+        await cv2_engine.send_cv2(ctx, comps, files)
+    except Exception as exc:
+        logger.error("help send failed", exc=exc)
+        await ctx.send("⚠️ couldn't load help. try again.")
 
 
-# ── Entry point ──────────────────────────────────────────────────────────────
+# ── Entry point ───────────────────────────────────────────────────────────────
 
 async def main() -> None:
+    logger.startup_banner()
+
     token = os.environ.get("NOXIE_TOKEN") or CONFIG.get("bot_token", "")
     if not token or token == "YOUR_BOT_TOKEN_HERE":
-        print(
-            "❌ No bot token found.\n"
-            "   Set NOXIE_TOKEN environment variable or add bot_token to config.json"
+        logger.error(
+            "No bot token found. "
+            "Set NOXIE_TOKEN environment variable or add bot_token to config.json"
         )
         return
 
+    logger.info("starting Noxie …")
+
     bot = NoxieBot()
 
-    # Register a simple help command directly on the bot
     @bot.command(name="help", aliases=["commands", "cmds"])
     async def help_cmd(ctx: commands.Context) -> None:
         await _send_help(ctx)

@@ -25,7 +25,7 @@ import aiohttp
 from discord import app_commands
 from discord.ext import commands
 
-from modules import economy, cv2_engine, face_manager, personality
+from modules import economy, cv2_engine, face_manager, personality, logger
 from modules.utils import load_config
 
 if TYPE_CHECKING:
@@ -35,13 +35,13 @@ CONFIG = load_config()
 
 OXAPAY_KEY  = CONFIG.get("oxapay_merchant_key", "")
 OXAPAY_BASE = CONFIG.get("oxapay_base_url", "https://api.oxapay.com")
-ECON_CFG        = CONFIG.get("economy", {})
+ECON_CFG    = CONFIG.get("economy", {})
 
-GS_PER_USD  = ECON_CFG.get("donation_glow_shards_per_usd", 500)
-VC_PER_USD  = ECON_CFG.get("donation_vibe_coins_per_usd", 50)
+GS_PER_USD = ECON_CFG.get("donation_glow_shards_per_usd", 500)
+VC_PER_USD = ECON_CFG.get("donation_vibe_coins_per_usd", 50)
 
-POLL_INTERVAL   = 15   # seconds between status checks
-POLL_MAX        = 40   # max polls (~10 min)
+POLL_INTERVAL = 15   # seconds between status checks
+POLL_MAX      = 40   # max polls (~10 min)
 
 SUPPORTED_CURRENCIES = ["USDT", "BTC", "ETH", "LTC", "BNB", "DOGE", "TRX"]
 
@@ -61,14 +61,14 @@ async def create_invoice(
     """
     url = f"{OXAPAY_BASE}/merchants/request"
     payload = {
-        "merchant":   OXAPAY_KEY,
-        "amount":     amount_usd,
-        "currency":   "USD",
+        "merchant":    OXAPAY_KEY,
+        "amount":      amount_usd,
+        "currency":    "USD",
         "payCurrency": currency,
-        "lifeTime":   600,   # 10 min expiry
-        "orderId":    order_id,
+        "lifeTime":    600,
+        "orderId":     order_id,
         "description": description,
-        "returnUrl":  "",
+        "returnUrl":   "",
         "callbackUrl": "",
     }
     async with session.post(url, json=payload, timeout=aiohttp.ClientTimeout(total=15)) as r:
@@ -114,27 +114,31 @@ async def run_donation_flow(
     All CV2 messages are sent to user DMs.
     """
     order_id = f"noxie-{user.id}-{int(asyncio.get_event_loop().time())}"
+    logger.info(f"donation flow started: user={user.id} amount={amount_usd} {currency}")
 
     try:
         dm = await user.create_dm()
     except discord.Forbidden:
-        return  # Can't DM user
+        logger.warn(f"cannot DM user={user.id} — DMs closed")
+        return
 
     async with aiohttp.ClientSession() as session:
         # ── Step 1: create invoice ────────────────────────────────────────────
         try:
             data = await create_invoice(session, amount_usd, currency, order_id)
-        except Exception as e:
+            logger.success(f"invoice created: user={user.id} track={data.get('trackId')}")
+        except Exception as exc:
+            logger.error(f"invoice creation failed for user={user.id}", exc=exc)
             banner = face_manager.get_face_for_event("donate_fail")
             comps, files = cv2_engine.build_donate_failed_container(
-                reason=str(e), banner_path=banner
+                reason=str(exc), banner_path=banner
             )
             await cv2_engine.send_cv2(dm, comps, files)
             return
 
-        track_id     = data.get("trackId", "")
-        pay_address  = data.get("payAddress", "N/A")
-        pay_amount   = str(data.get("payAmount", "?"))
+        track_id    = data.get("trackId", "")
+        pay_address = data.get("payAddress", "N/A")
+        pay_amount  = str(data.get("payAmount", "?"))
 
         # ── Step 2: send payment instructions in DMs ──────────────────────────
         banner_start = face_manager.get_face_for_event("donate_start")
@@ -152,20 +156,23 @@ async def run_donation_flow(
         confirmed = False
         tx_id     = track_id
 
-        for _ in range(POLL_MAX):
+        for i in range(POLL_MAX):
             await asyncio.sleep(POLL_INTERVAL)
             try:
                 status_data = await check_invoice(session, track_id)
-            except Exception:
-                continue  # transient error, keep polling
+            except Exception as exc:
+                logger.warn(f"poll {i+1}/{POLL_MAX} failed for user={user.id}: {exc}")
+                continue
 
             status = status_data.get("status", "").lower()
+            logger.debug(f"poll {i+1}/{POLL_MAX} user={user.id} status={status!r}")
 
             if status in ("paid", "confirmed", "complete"):
                 confirmed = True
                 break
             if status in ("expired", "cancelled", "failed"):
-                break  # terminal failure
+                logger.info(f"donation terminal status={status!r} for user={user.id}")
+                break
 
         # ── Step 4: handle result ─────────────────────────────────────────────
         if confirmed:
@@ -175,6 +182,11 @@ async def run_donation_flow(
             economy.log_donation(bot.db, str(user.id), amount_usd, currency, tx_id)
             economy.add_currency(bot.db, str(user.id), gid, glow, coins)
             is_new_donor = economy.award_badge(bot.db, str(user.id), "donor")
+
+            logger.success(
+                f"donation confirmed: user={user.id} glow={glow} coins={coins}"
+                + (" NEW_DONOR" if is_new_donor else "")
+            )
 
             line = personality.get_line("donate_thanks")
             banner_done = face_manager.get_face_for_event("donate_done")
@@ -190,6 +202,7 @@ async def run_donation_flow(
             await cv2_engine.send_cv2(dm, comps, files)
 
         else:
+            logger.warn(f"donation not confirmed for user={user.id} — sending failure msg")
             banner_fail = face_manager.get_face_for_event("donate_fail")
             comps, files = cv2_engine.build_donate_failed_container(
                 reason="payment expired or was not received",
@@ -232,6 +245,7 @@ class DonateCog(commands.Cog, name="Donate"):
             )
             return
 
+        # Acknowledge immediately — DM flow is async
         await interaction.response.send_message(
             "💌 Check your DMs! The donation flow is being set up.",
             ephemeral=True,
@@ -271,3 +285,4 @@ class DonateCog(commands.Cog, name="Donate"):
 
 async def setup(bot: "NoxieBot") -> None:
     await bot.add_cog(DonateCog(bot))
+    logger.success("DonateCog loaded")

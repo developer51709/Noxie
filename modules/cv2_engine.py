@@ -1,26 +1,28 @@
 """
 cv2_engine.py — Discord Components V2 container builder for Noxie.
 
-All CV2 messages are sent with:
-    flags=discord.MessageFlags(is_components_v2=True)
-    components=[container]
-    files=[...]     ← attached mood banner image
+Send path:
+    send_cv2() wraps all components in a discord.ui.LayoutView and sends
+    via response.send_message() or ctx.send() — the library sets the CV2
+    message flag automatically.
 
-Mood banners are ALWAYS placed at the BOTTOM of containers that require them:
-  - hunt results
-  - donation flow containers
-  - vibe creature displays
-  - mood pulse containers
+Container builder conventions (must match the working profile pattern):
+    - discord.ui.Container(*items, accent_color=color)   ← unpack, NOT children=
+    - discord.ui.Separator(visible=True/False)           ← NOT divider=
+    - discord.ui.MediaGallery(discord.MediaGalleryItem(media="attachment://..."))
+                                                         ← positional, top-level class
+    - container.add_item(…) for conditional banner rows  ← appended after construction
+
+Mood banners are ALWAYS placed at the BOTTOM of containers that need them.
 """
 
 from __future__ import annotations
 
 import discord
-from pathlib import Path
 from typing import Optional
 
 
-# ── Rarity color map (decimal) ────────────────────────────────────────────────
+# ── Rarity color map ──────────────────────────────────────────────────────────
 
 RARITY_COLORS: dict[str, int] = {
     "common":    0x829882,
@@ -32,14 +34,21 @@ RARITY_COLORS: dict[str, int] = {
 }
 
 
-# ── Small helpers ─────────────────────────────────────────────────────────────
-
-def _accent(color_int: int) -> discord.Color:
-    return discord.Color(color_int)
-
+# ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _make_file(path: str, filename: str) -> discord.File:
     return discord.File(path, filename=filename)
+
+
+def _media(attachment_name: str) -> discord.ui.MediaGallery:
+    """One-image MediaGallery using the top-level discord.MediaGalleryItem."""
+    return discord.ui.MediaGallery(
+        discord.MediaGalleryItem(media=f"attachment://{attachment_name}")
+    )
+
+
+def _sep(visible: bool = False) -> discord.ui.Separator:
+    return discord.ui.Separator(visible=visible)
 
 
 # ── HUNT RESULT container ─────────────────────────────────────────────────────
@@ -54,16 +63,11 @@ def build_hunt_container(
     banner_path: Optional[str] = None,
 ) -> tuple[list, list[discord.File]]:
     """
-    Build a CV2 container for a hunt result.
-    Returns (components_list, files_list).
-
-    Layout:
-      TOP    — creature artwork (MediaGallery)
-      MIDDLE — stats, rewards, personality line
-      BOTTOM — mood banner (MediaGallery)
+    Hunt result container.
+    Layout: creature art (top) → stats → rewards → personality line → mood banner (bottom)
     """
     rarity = creature.get("rarity", "common")
-    color = RARITY_COLORS.get(rarity, RARITY_COLORS["common"])
+    color  = RARITY_COLORS.get(rarity, RARITY_COLORS["common"])
 
     rarity_labels = {
         "common":    "◽ Common",
@@ -73,38 +77,29 @@ def build_hunt_container(
         "legendary": "⭐ Legendary",
         "mythic":    "🌌 Mythic",
     }
-    rarity_label = rarity_labels.get(rarity, rarity.capitalize())
-
-    mood_emoji_map = {
-        "melancholy": "🌧️",
-        "chaotic":    "⚡",
-        "cozy":       "🌿",
-        "neutral":    "🫧",
-        "sarcastic":  "🌑",
+    mood_emojis = {
+        "melancholy": "🌧️", "chaotic": "⚡", "cozy": "🌿",
+        "neutral": "🫧", "sarcastic": "🌑",
     }
-    mood_emoji = mood_emoji_map.get(creature.get("mood", "neutral"), "✨")
+
+    rarity_label = rarity_labels.get(rarity, rarity.capitalize())
+    mood_emoji   = mood_emojis.get(creature.get("mood", "neutral"), "✨")
 
     files: list[discord.File] = []
     inner: list = []
 
-    # ── Creature artwork at the TOP ────────────────────────────────────────────
+    # Creature artwork — top
     if art_path:
         art_filename = f"art_{creature['id']}.png"
-        inner.append(
-            discord.ui.MediaGallery(
-                items=[discord.ui.MediaGalleryItem(media=f"attachment://{art_filename}")]
-            )
-        )
+        inner.append(_media(art_filename))
         files.append(_make_file(art_path, art_filename))
-        inner.append(discord.ui.Separator(divider=False))
+        inner.append(_sep(visible=False))
 
-    # ── Stats and info ─────────────────────────────────────────────────────────
     inner += [
         discord.ui.TextDisplay(
-            content=f"## {creature['emoji']}  {creature['name']}\n"
-                    f"{creature['description']}"
+            content=f"## {creature['emoji']}  {creature['name']}\n{creature['description']}"
         ),
-        discord.ui.Separator(visible=True),
+        _sep(visible=True),
         discord.ui.TextDisplay(
             content=(
                 f"**Rarity** — {rarity_label}\n"
@@ -113,31 +108,26 @@ def build_hunt_container(
                 f"**Power**  — `{creature.get('power', 0):,}`"
             )
         ),
-        discord.ui.Separator(visible=False),
+        _sep(visible=False),
         discord.ui.TextDisplay(
             content=(
                 f"**Rewards:** +{glow_earned} Glow Shards  ·  +{coins_earned} Vibe Coins\n"
                 f"*Total hunts: {total_hunts}*"
             )
         ),
-        discord.ui.Separator(visible=True),
+        _sep(visible=True),
         discord.ui.TextDisplay(content=f"*{personality_line}*"),
     ]
 
-    # ── Mood banner at the BOTTOM ──────────────────────────────────────────────
+    container = discord.ui.Container(*inner, accent_color=discord.Color(color))
+
+    # Mood banner — bottom
     if banner_path:
         banner_filename = f"banner_{rarity}.jpeg"
-        inner.append(
-            discord.ui.MediaGallery(
-                items=[discord.ui.MediaGalleryItem(media=f"attachment://{banner_filename}")]
-            )
-        )
+        container.add_item(_sep(visible=False))
+        container.add_item(_media(banner_filename))
         files.append(_make_file(banner_path, banner_filename))
 
-    container = discord.ui.Container(
-        children=inner,
-        accent_color=discord.Color(color),
-    )
     return [container], files
 
 
@@ -150,37 +140,27 @@ def build_creature_container(
     banner_path: Optional[str] = None,
 ) -> tuple[list, list[discord.File]]:
     """
-    Build a CV2 container for displaying a vibe creature in inventory/profile.
-
-    Layout:
-      TOP    — creature artwork (MediaGallery)
-      MIDDLE — stats
-      BOTTOM — mood banner (MediaGallery)
+    Single creature display for inventory/profile detail.
+    Layout: art (top) → stats → mood banner (bottom)
     """
     rarity = creature.get("rarity", "common")
-    color = RARITY_COLORS.get(rarity, RARITY_COLORS["common"])
+    color  = RARITY_COLORS.get(rarity, RARITY_COLORS["common"])
 
     files: list[discord.File] = []
     inner: list = []
 
-    # ── Creature artwork at the TOP ────────────────────────────────────────────
     if art_path:
         art_filename = f"art_{creature['id']}.png"
-        inner.append(
-            discord.ui.MediaGallery(
-                items=[discord.ui.MediaGalleryItem(media=f"attachment://{art_filename}")]
-            )
-        )
+        inner.append(_media(art_filename))
         files.append(_make_file(art_path, art_filename))
-        inner.append(discord.ui.Separator(divider=False))
+        inner.append(_sep(visible=False))
 
-    # ── Stats ──────────────────────────────────────────────────────────────────
     inner += [
         discord.ui.TextDisplay(
             content=f"## {creature['emoji']}  {creature['name']}  ×{count}\n"
                     f"> {creature['description']}"
         ),
-        discord.ui.Separator(visible=True),
+        _sep(visible=True),
         discord.ui.TextDisplay(
             content=(
                 f"**Rarity** — {rarity.capitalize()}\n"
@@ -191,24 +171,17 @@ def build_creature_container(
         ),
     ]
 
-    # ── Mood banner at BOTTOM ──────────────────────────────────────────────────
+    container = discord.ui.Container(*inner, accent_color=discord.Color(color))
+
     if banner_path:
-        inner.append(discord.ui.Separator(visible=False))
-        inner.append(
-            discord.ui.MediaGallery(
-                items=[discord.ui.MediaGalleryItem(media="attachment://creature_banner.jpeg")]
-            )
-        )
+        container.add_item(_sep(visible=False))
+        container.add_item(_media("creature_banner.jpeg"))
         files.append(_make_file(banner_path, "creature_banner.jpeg"))
 
-    container = discord.ui.Container(
-        children=inner,
-        accent_color=discord.Color(color),
-    )
     return [container], files
 
 
-# ── MOOD PULSE container ──────────────────────────────────────────────────────
+# ── MOOD PULSE / PROFILE container ────────────────────────────────────────────
 
 def build_mood_pulse_container(
     user_name: str,
@@ -222,8 +195,7 @@ def build_mood_pulse_container(
     badge_display: Optional[dict] = None,
 ) -> tuple[list, list[discord.File]]:
     """
-    Build a mood pulse / profile CV2 container.
-    Mood banner at BOTTOM.
+    Profile / mood pulse container. Mood banner at bottom.
     """
     badge_display = badge_display or {}
     badge_str = "  ".join(
@@ -231,10 +203,8 @@ def build_mood_pulse_container(
     ) if badges else "*no badges yet*"
 
     container = discord.ui.Container(
-        discord.ui.TextDisplay(
-            content=f"## 👁️  {user_name}'s Vibe Profile"
-        ),
-        discord.ui.Separator(visible=True),
+        discord.ui.TextDisplay(content=f"## 👁️  {user_name}'s Vibe Profile"),
+        _sep(visible=True),
         discord.ui.TextDisplay(
             content=(
                 f"**Current Vibe** — {vibe_status}\n"
@@ -242,29 +212,25 @@ def build_mood_pulse_container(
                 f"**Total Hunts**  — {total_hunts:,}"
             )
         ),
-        discord.ui.Separator(visible=False),
+        _sep(visible=False),
         discord.ui.TextDisplay(
             content=(
                 f"**Glow Shards** — `{glow_shards:,}` ✨\n"
                 f"**Vibe Coins**  — `{vibe_coins:,}` 🪙"
             )
         ),
-        discord.ui.Separator(visible=True),
+        _sep(visible=True),
         discord.ui.TextDisplay(content=f"**Badges**\n{badge_str}"),
         accent_color=discord.Color(0x7930A7),
     )
 
     files: list[discord.File] = []
 
-    # ── Mood banner at BOTTOM ──────────────────────────────────────────────────
     if banner_path:
-        container.add_item(discord.ui.Separator(visible=False))
-        container.add_item(
-            discord.ui.MediaGallery(
-                discord.MediaGalleryItem(media="attachment://mood_pulse.jpeg")
-            )
-        )
+        container.add_item(_sep(visible=False))
+        container.add_item(_media("mood_pulse.jpeg"))
         files.append(_make_file(banner_path, "mood_pulse.jpeg"))
+
     return [container], files
 
 
@@ -277,9 +243,7 @@ def build_inventory_container(
     page: int = 1,
     per_page: int = 6,
 ) -> tuple[list, list[discord.File]]:
-    """
-    Build an inventory listing container.  No mood banner (space saving).
-    """
+    """Paged creature collection list. No mood banner."""
     items = list(creature_counts.items())
     total_pages = max(1, (len(items) + per_page - 1) // per_page)
     page = max(1, min(page, total_pages))
@@ -293,20 +257,16 @@ def build_inventory_container(
         for cid, cnt in page_items:
             c = all_creatures.get(cid, {})
             lines += (
-                f"{c.get('emoji','❓')} **{c.get('name', cid)}** ×{cnt} "
-                f"— {c.get('rarity','?').capitalize()} · {c.get('mood','?').capitalize()}\n"
+                f"{c.get('emoji', '❓')} **{c.get('name', cid)}** ×{cnt} "
+                f"— {c.get('rarity', '?').capitalize()} · {c.get('mood', '?').capitalize()}\n"
             )
 
-    inner: list = [
+    container = discord.ui.Container(
         discord.ui.TextDisplay(
             content=f"## 🎒  {user_name}'s Collection  (page {page}/{total_pages})"
         ),
-        discord.ui.Separator(visible=True),
+        _sep(visible=True),
         discord.ui.TextDisplay(content=lines),
-    ]
-
-    container = discord.ui.Container(
-        children=inner,
         accent_color=discord.Color(0x4A4A6A),
     )
     return [container], []
@@ -322,15 +282,10 @@ def build_donate_start_container(
     payment_id: str,
     banner_path: Optional[str] = None,
 ) -> tuple[list, list[discord.File]]:
-    """
-    Build the donation initiation CV2 container (sent in DMs).
-    Mood banner at BOTTOM.
-    """
-    inner: list = [
-        discord.ui.TextDisplay(
-            content="## 💎  Support Noxie"
-        ),
-        discord.ui.Separator(visible=True),
+    """Donation initiation container sent in DMs. Mood banner at bottom."""
+    container = discord.ui.Container(
+        discord.ui.TextDisplay(content="## 💎  Support Noxie"),
+        _sep(visible=True),
         discord.ui.TextDisplay(
             content=(
                 f"**Amount:**    `${amount_usd:.2f} USD`\n"
@@ -340,7 +295,7 @@ def build_donate_start_container(
                 f"**Payment ID:** `{payment_id}`"
             )
         ),
-        discord.ui.Separator(visible=False),
+        _sep(visible=False),
         discord.ui.TextDisplay(
             content=(
                 "⏳ Send the exact amount shown above.\n"
@@ -348,24 +303,16 @@ def build_donate_start_container(
                 "*Powered by OxaPay*"
             )
         ),
-    ]
+        accent_color=discord.Color(0xF0B429),
+    )
 
     files: list[discord.File] = []
 
-    # ── Mood banner at BOTTOM ──────────────────────────────────────────────────
     if banner_path:
-        inner.append(discord.ui.Separator(visible=False))
-        inner.append(
-            discord.ui.MediaGallery(
-                items=[discord.ui.MediaGalleryItem(media="attachment://donate_start.jpeg")]
-            )
-        )
+        container.add_item(_sep(visible=False))
+        container.add_item(_media("donate_start.jpeg"))
         files.append(_make_file(banner_path, "donate_start.jpeg"))
 
-    container = discord.ui.Container(
-        children=inner,
-        accent_color=discord.Color(0xF0B429),
-    )
     return [container], files
 
 
@@ -378,17 +325,12 @@ def build_donate_confirm_container(
     personality_line: str,
     banner_path: Optional[str] = None,
 ) -> tuple[list, list[discord.File]]:
-    """
-    Build the donation confirmation CV2 container (sent in DMs).
-    Mood banner at BOTTOM.
-    """
+    """Donation confirmation container sent in DMs. Mood banner at bottom."""
     badge_note = "\n🏅 **Donor Badge** unlocked!" if is_new_donor else ""
 
-    inner: list = [
-        discord.ui.TextDisplay(
-            content="## 💖  Payment Confirmed!"
-        ),
-        discord.ui.Separator(visible=True),
+    container = discord.ui.Container(
+        discord.ui.TextDisplay(content="## 💖  Payment Confirmed!"),
+        _sep(visible=True),
         discord.ui.TextDisplay(
             content=(
                 f"**Amount received:** `${amount_usd:.2f}` in `{currency}`\n\n"
@@ -398,26 +340,18 @@ def build_donate_confirm_container(
                 f"{badge_note}"
             )
         ),
-        discord.ui.Separator(visible=True),
+        _sep(visible=True),
         discord.ui.TextDisplay(content=f"*{personality_line}*"),
-    ]
+        accent_color=discord.Color(0x2ECC71),
+    )
 
     files: list[discord.File] = []
 
-    # ── Mood banner at BOTTOM ──────────────────────────────────────────────────
     if banner_path:
-        inner.append(discord.ui.Separator(visible=False))
-        inner.append(
-            discord.ui.MediaGallery(
-                items=[discord.ui.MediaGalleryItem(media="attachment://donate_confirm.jpeg")]
-            )
-        )
+        container.add_item(_sep(visible=False))
+        container.add_item(_media("donate_confirm.jpeg"))
         files.append(_make_file(banner_path, "donate_confirm.jpeg"))
 
-    container = discord.ui.Container(
-        children=inner,
-        accent_color=discord.Color(0x2ECC71),
-    )
     return [container], files
 
 
@@ -425,68 +359,49 @@ def build_donate_failed_container(
     reason: str = "payment not confirmed",
     banner_path: Optional[str] = None,
 ) -> tuple[list, list[discord.File]]:
-    """
-    Build a donation failure container (sent in DMs).
-    Mood banner at BOTTOM.
-    """
-    inner: list = [
+    """Donation failure container sent in DMs. Mood banner at bottom."""
+    container = discord.ui.Container(
         discord.ui.TextDisplay(content="## ❌  Donation Issue"),
-        discord.ui.Separator(visible=True),
+        _sep(visible=True),
         discord.ui.TextDisplay(
             content=(
                 f"Something went wrong: *{reason}*\n\n"
                 "Please try again or contact a server admin."
             )
         ),
-    ]
+        accent_color=discord.Color(0xE74C3C),
+    )
 
     files: list[discord.File] = []
 
     if banner_path:
-        inner.append(discord.ui.Separator(visible=False))
-        inner.append(
-            discord.ui.MediaGallery(
-                items=[discord.ui.MediaGalleryItem(media="attachment://donate_fail.jpeg")]
-            )
-        )
+        container.add_item(_sep(visible=False))
+        container.add_item(_media("donate_fail.jpeg"))
         files.append(_make_file(banner_path, "donate_fail.jpeg"))
 
-    container = discord.ui.Container(
-        children=inner,
-        accent_color=discord.Color(0xE74C3C),
-    )
     return [container], files
 
 
-# ── FACE REACTION (standalone) ────────────────────────────────────────────────
+# ── FACE REACTION container ───────────────────────────────────────────────────
 
 def build_face_reaction_container(
     message: str,
     banner_path: Optional[str] = None,
     color: int = 0x7930A7,
 ) -> tuple[list, list[discord.File]]:
-    """
-    Generic Noxie face reaction container. Mood banner at bottom if provided.
-    """
-    inner: list = [
+    """Generic face/mood reaction container. Mood banner at bottom if provided."""
+    container = discord.ui.Container(
         discord.ui.TextDisplay(content=message),
-    ]
+        accent_color=discord.Color(color),
+    )
 
     files: list[discord.File] = []
 
     if banner_path:
-        inner.append(discord.ui.Separator(visible=False))
-        inner.append(
-            discord.ui.MediaGallery(
-                items=[discord.ui.MediaGalleryItem(media="attachment://face.jpeg")]
-            )
-        )
+        container.add_item(_sep(visible=False))
+        container.add_item(_media("face.jpeg"))
         files.append(_make_file(banner_path, "face.jpeg"))
 
-    container = discord.ui.Container(
-        children=inner,
-        accent_color=discord.Color(color),
-    )
     return [container], files
 
 
@@ -499,14 +414,27 @@ async def send_cv2(
     ephemeral: bool = False,
 ) -> None:
     """
-    Unified send for CV2 messages across ctx, channel, and interaction.
+    Unified CV2 send for ctx, channel, and interaction targets.
+
+    Uses discord.ui.LayoutView — the correct container for CV2 top-level
+    components (Container, TextDisplay, MediaGallery, etc.). Each component
+    in the list is added individually; the library sets the CV2 flag automatically.
     """
     view = discord.ui.LayoutView()
-    view.add_item(components)
-    if ctx.interaction:
-        if ephemeral:
-            return await interaction.followup.send(view=view, files=files, ephemeral=True)
+    for item in components:
+        view.add_item(item)
+
+    # Pass files only when there are any; MISSING skips the parameter entirely.
+    send_files = files if files else discord.utils.MISSING
+
+    if isinstance(target, discord.Interaction):
+        if target.response.is_done():
+            # Already responded (e.g. after an ephemeral ack) — use followup.
+            await target.followup.send(view=view, files=send_files, ephemeral=ephemeral)
         else:
-            return await interaction.followup.send(view=view, files=files, ephemeral=False)
+            await target.response.send_message(view=view, files=send_files, ephemeral=ephemeral)
+    elif hasattr(target, "send"):
+        # commands.Context or any Messageable (channel, DM, etc.)
+        await target.send(view=view, files=send_files)
     else:
-        await ctx.send(view=view, files=files)
+        raise TypeError(f"Cannot send CV2 to target of type {type(target)}")

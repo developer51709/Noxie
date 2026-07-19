@@ -12,7 +12,8 @@ from typing import TYPE_CHECKING
 import discord
 from discord.ext import commands
 
-from modules.utils import get_db_conn, load_config
+from modules.utils import load_config
+from modules import logger
 
 if TYPE_CHECKING:
     from main import NoxieBot
@@ -48,7 +49,7 @@ def get_guild_prefixes(conn: sqlite3.Connection, guild_id: str) -> list[str]:
 def add_prefix(conn: sqlite3.Connection, guild_id: str, prefix: str) -> bool:
     """Add a custom prefix. Returns False if it already exists or is the global prefix."""
     if prefix.lower() == GLOBAL_PREFIX.lower():
-        return False  # can't add what's already permanent
+        return False
     try:
         conn.execute(
             "INSERT INTO guild_prefixes (guild_id, prefix) VALUES (?,?)",
@@ -66,7 +67,7 @@ def remove_prefix(conn: sqlite3.Connection, guild_id: str, prefix: str) -> bool:
     Returns False if the prefix is the global prefix (blocked) or doesn't exist.
     """
     if prefix.lower() == GLOBAL_PREFIX.lower():
-        return False  # immovable
+        return False
     cur = conn.execute(
         "DELETE FROM guild_prefixes WHERE guild_id=? AND prefix=?",
         (guild_id, prefix)
@@ -78,7 +79,6 @@ def remove_prefix(conn: sqlite3.Connection, guild_id: str, prefix: str) -> bool:
 def all_prefixes_for_guild(conn: sqlite3.Connection, guild_id: str) -> list[str]:
     """Return ALL effective prefixes: global + guild custom."""
     custom = get_guild_prefixes(conn, guild_id)
-    # Deduplicate while preserving global prefix first
     seen = {GLOBAL_PREFIX.lower()}
     result = [GLOBAL_PREFIX]
     for p in custom:
@@ -93,15 +93,25 @@ def all_prefixes_for_guild(conn: sqlite3.Connection, guild_id: str) -> list[str]
 def prefix_callable(bot: "NoxieBot", message: discord.Message) -> list[str]:
     """
     Called by discord.py for every incoming message.
-    Returns all active prefixes for the guild (or DMs).
+    Always returns at least the global prefix.
+
+    Uses the bot's shared DB connection to avoid opening a new connection per
+    message (which was the previous source of silent failures when the table
+    didn't yet exist on a fresh connection object).
     """
     if message.guild is None:
-        # DMs: only global prefix
+        # DMs: only the global prefix
         return [GLOBAL_PREFIX]
-    conn = get_db_conn(CONFIG)
-    prefixes = all_prefixes_for_guild(conn, str(message.guild.id))
-    conn.close()
-    return prefixes
+
+    try:
+        # Use the bot's existing connection — tables are guaranteed to exist.
+        conn: sqlite3.Connection = bot.db  # type: ignore[attr-defined]
+        return all_prefixes_for_guild(conn, str(message.guild.id))
+    except Exception as exc:
+        # Never raise from the prefix callable — discord.py drops commands
+        # silently if this function throws.
+        logger.error(f"prefix_callable error for guild={message.guild.id}", exc=exc)
+        return [GLOBAL_PREFIX]
 
 
 # ── Cog ─────────────────────────────────────────────────────────────────────
@@ -117,44 +127,58 @@ class PrefixCog(commands.Cog, name="Prefixes"):
     @commands.guild_only()
     async def prefix_group(self, ctx: commands.Context) -> None:
         """List all active prefixes for this server."""
-        prefixes = all_prefixes_for_guild(self.bot.db, str(ctx.guild.id))
-        listed = "\n".join(f"• `{p}`" for p in prefixes)
-        await ctx.send(
-            f"**Active prefixes for this server:**\n{listed}\n\n"
-            f"The prefix `{GLOBAL_PREFIX}` is always available and cannot be removed.",
-            ephemeral=True,
-        )
+        try:
+            prefixes = all_prefixes_for_guild(self.bot.db, str(ctx.guild.id))
+            listed = "\n".join(f"• `{p}`" for p in prefixes)
+            await ctx.send(
+                f"**Active prefixes for this server:**\n{listed}\n\n"
+                f"The prefix `{GLOBAL_PREFIX}` is always available and cannot be removed.",
+                ephemeral=True,
+            )
+        except Exception as exc:
+            logger.error("prefix list error", exc=exc)
+            await ctx.send("⚠️ couldn't fetch prefixes. try again.", ephemeral=True)
 
     @prefix_group.command(name="add")
     @commands.guild_only()
     @commands.has_permissions(manage_guild=True)
     async def prefix_add(self, ctx: commands.Context, *, new_prefix: str) -> None:
         """Add a custom prefix for this server."""
-        added = add_prefix(self.bot.db, str(ctx.guild.id), new_prefix)
-        if added:
-            await ctx.send(f"✅ Prefix `{new_prefix}` added.", ephemeral=True)
-        else:
-            await ctx.send(
-                f"❌ `{new_prefix}` is already registered or cannot be added.", ephemeral=True
-            )
+        try:
+            added = add_prefix(self.bot.db, str(ctx.guild.id), new_prefix)
+            if added:
+                await ctx.send(f"✅ Prefix `{new_prefix}` added.", ephemeral=True)
+            else:
+                await ctx.send(
+                    f"❌ `{new_prefix}` is already registered or cannot be added.",
+                    ephemeral=True,
+                )
+        except Exception as exc:
+            logger.error("prefix add error", exc=exc)
+            await ctx.send("⚠️ couldn't add prefix. try again.", ephemeral=True)
 
     @prefix_group.command(name="remove")
     @commands.guild_only()
     @commands.has_permissions(manage_guild=True)
     async def prefix_remove(self, ctx: commands.Context, *, prefix: str) -> None:
         """Remove a custom prefix from this server."""
-        if prefix.lower() == GLOBAL_PREFIX.lower():
-            await ctx.send(
-                f"❌ The global prefix `{GLOBAL_PREFIX}` is permanent and cannot be removed.",
-                ephemeral=True,
-            )
-            return
-        removed = remove_prefix(self.bot.db, str(ctx.guild.id), prefix)
-        if removed:
-            await ctx.send(f"✅ Prefix `{prefix}` removed.", ephemeral=True)
-        else:
-            await ctx.send(f"❌ Prefix `{prefix}` was not found.", ephemeral=True)
+        try:
+            if prefix.lower() == GLOBAL_PREFIX.lower():
+                await ctx.send(
+                    f"❌ The global prefix `{GLOBAL_PREFIX}` is permanent and cannot be removed.",
+                    ephemeral=True,
+                )
+                return
+            removed = remove_prefix(self.bot.db, str(ctx.guild.id), prefix)
+            if removed:
+                await ctx.send(f"✅ Prefix `{prefix}` removed.", ephemeral=True)
+            else:
+                await ctx.send(f"❌ Prefix `{prefix}` was not found.", ephemeral=True)
+        except Exception as exc:
+            logger.error("prefix remove error", exc=exc)
+            await ctx.send("⚠️ couldn't remove prefix. try again.", ephemeral=True)
 
 
 async def setup(bot: "NoxieBot") -> None:
     await bot.add_cog(PrefixCog(bot))
+    logger.success("PrefixCog loaded")
