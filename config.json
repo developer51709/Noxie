@@ -1,0 +1,20 @@
+{
+  "bot_token": "YOUR_BOT_TOKEN_HERE",
+  "global_prefix": "noxie ",
+  "oxapay_merchant_key": "YOUR_OXAPAY_MERCHANT_KEY_HERE",
+  "oxapay_base_url": "https://api.oxapay.com",
+  "donation_channel_log": null,
+  "db_path": "db/noxie.db",
+  "hunt_cooldown": 30,
+  "default_accent_color": 7930727,
+  "rare_accent_color": 16766720,
+  "epic_accent_color": 10027263,
+  "legendary_accent_color": 16744272,
+  "mythic_accent_color": 16711782,
+  "economy": {
+    "glow_shards_per_hunt": [5, 25],
+    "vibe_coins_per_hunt": [1, 5],
+    "donation_glow_shards_per_usd": 500,
+    "donation_vibe_coins_per_usd": 50
+  }
+}
