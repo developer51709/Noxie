@@ -257,6 +257,11 @@ async def do_hunt(
     Run a full hunt flow: cooldown check → roll → record → build CV2 → send.
     """
     try:
+        # Acknowledge immediately so Discord doesn't expire the interaction
+        # while DB work and rolls are running (must happen within 3 s).
+        if isinstance(target, discord.Interaction):
+            await target.response.defer()
+
         # Cooldown check
         remaining = economy.check_hunt_cooldown(bot.db, user_id, guild_id)
         if remaining > 0:
@@ -375,6 +380,7 @@ class HuntCog(commands.Cog, name="Hunt"):
     async def inventory_slash(
         self, interaction: discord.Interaction, page: int = 1
     ) -> None:
+        await interaction.response.defer()
         inv = economy.get_inventory(
             self.bot.db, str(interaction.user.id), str(interaction.guild_id)
         )
@@ -432,6 +438,7 @@ class HuntCog(commands.Cog, name="Hunt"):
     @app_commands.command(name="vibe", description="Check your current vibe energy.")
     @app_commands.guild_only()
     async def vibe_slash(self, interaction: discord.Interaction) -> None:
+        await interaction.response.defer()
         bal = economy.get_balance(
             self.bot.db, str(interaction.user.id), str(interaction.guild_id)
         )
